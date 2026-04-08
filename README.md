@@ -2,6 +2,11 @@
 
 System zarządzania restauracją - fullstack web application.
 
+## URLs:
+dev: restaurant-manager-git-dev-pol1budas-projects.vercel.app
+prod: restaurant-manager-psi.vercel.app
+
+
 ## Stack technologiczny
 
 ### TypeScript (frontend + backend)

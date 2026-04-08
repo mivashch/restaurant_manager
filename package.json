@@ -10,11 +10,13 @@
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
   },
   "dependencies": {
+    "@types/node": "^22.19.17",
+    "@vercel/node": "^5.7.2",
     "hono": "^4.7.7"
   },
   "devDependencies": {
-    "turbo": "^2.5.3",
     "prettier": "^3.5.3",
+    "turbo": "^2.5.3",
     "typescript": "^5.8.3"
   },
   "engines": {
@@ -22,6 +24,8 @@
   },
   "packageManager": "pnpm@10.33.0",
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }

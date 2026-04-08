@@ -8,6 +8,9 @@
     "typecheck": "turbo run typecheck",
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
   },
+  "dependencies": {
+    "hono": "^4.7.7"
+  },
   "devDependencies": {
     "turbo": "^2.5.3",
     "prettier": "^3.5.3",

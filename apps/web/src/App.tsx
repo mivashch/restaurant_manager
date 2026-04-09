@@ -1,43 +1,52 @@
-import { useEffect, useState } from 'react'
-import type { HealthResponse } from '@restaurant-manager/shared'
+import { useState } from 'react'
 
 export default function App() {
-  const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [privateId, setPrivateId] = useState('')
 
-  useEffect(() => {
-    fetch('/api/health')
-      .then((r) => r.json())
-      .then((data: HealthResponse) => setHealth(data))
-      .catch(() => setError('API unavailable'))
-  }, [])
+  const handleSubmit = (_data: FormData) => {
+  }
 
   return (
-    <main className="min-h-screen bg-gray-50 flex items-center justify-center p-8">
-      <div className="w-full max-w-lg bg-white rounded-2xl shadow-sm border border-gray-100 p-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-1">Restaurant Manager</h1>
-        <p className="text-gray-500 mb-8">Test page. Pipeline configured.</p>
+    <div className="min-h-screen bg-neutral-50 flex flex-col">
+      <header className="bg-white border-b border-neutral-200 px-6 py-4">
+        <span className="text-sm font-medium tracking-widest uppercase text-neutral-400">
+          Restaurant Table Management
+        </span>
+      </header>
 
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-400 mb-3">
-          API Status
-        </h2>
+      <main className="flex-1 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm">
+          <h1 className="text-2xl font-semibold text-neutral-800 mb-8">
+            Sign in
+          </h1>
 
-        {error && (
-          <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-red-700 text-sm">
-            {error}
-          </div>
-        )}
+          <form action={handleSubmit} className="space-y-4">
+            <div>
+              <label
+                htmlFor="privateId"
+                className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-2"
+              >
+                Private ID
+              </label>
+              <input
+                id="privateId"
+                type="text"
+                value={privateId}
+                onChange={(e) => setPrivateId(e.target.value)}
+                placeholder="Enter your private ID"
+                className="w-full px-4 py-3 rounded-xl border border-neutral-200 bg-white text-neutral-800 placeholder-neutral-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-800 focus:border-transparent transition"
+              />
+            </div>
 
-        {health && (
-          <pre className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 font-mono">
-            {JSON.stringify(health, null, 2)}
-          </pre>
-        )}
-
-        {!health && !error && (
-          <p className="text-gray-400 text-sm animate-pulse">Loading...</p>
-        )}
-      </div>
-    </main>
+            <button
+              type="submit"
+              className="w-full py-3 rounded-xl bg-neutral-800 text-white text-sm font-medium hover:bg-neutral-700 active:bg-neutral-900 transition cursor-pointer"
+            >
+              Continue
+            </button>
+          </form>
+        </div>
+      </main>
+    </div>
   )
 }

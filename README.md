@@ -3,8 +3,8 @@
 Restaurant management system - fullstack web application.
 
 ## URLs:
-dev: restaurant-manager-git-dev-pol1budas-projects.vercel.app
-prod: restaurant-manager-psi.vercel.app
+- dev: restaurant-manager-git-dev-pol1budas-projects.vercel.app
+- prod: restaurant-manager-psi.vercel.app
 
 ## Local setup
 

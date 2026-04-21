@@ -80,8 +80,12 @@ export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
   }, [initial])
 
   function toSvgPt(e: React.MouseEvent): Pt {
-    const r = svgRef.current!.getBoundingClientRect()
-    return { x: (e.clientX - r.left) * (W / r.width), y: (e.clientY - r.top) * (H / r.height) }
+    const svg = svgRef.current!
+    const pt = svg.createSVGPoint()
+    pt.x = e.clientX
+    pt.y = e.clientY
+    const { x, y } = pt.matrixTransform(svg.getScreenCTM()!.inverse())
+    return { x, y }
   }
 
   function handleClick(e: React.MouseEvent) {

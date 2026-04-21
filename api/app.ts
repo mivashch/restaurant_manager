@@ -1,20 +1,12 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { supabase } from './supabase.js'
 
 type Role = 'admin' | 'waiter' | 'kitchen' | 'runner'
-type User = { id: string; name: string; roles: Role[] }
 
 const app = new Hono().basePath('/api')
 
 app.use('*', cors())
-
-// TODO: replace with Supabase query when DB is integrated
-const USERS: Record<string, User> = {
-  'ADMIN-001': { id: 'ADMIN-001', name: 'Admin User', roles: ['admin', 'waiter', 'kitchen', 'runner'] },
-  'WAITER-001': { id: 'WAITER-001', name: 'Waiter One', roles: ['waiter', 'runner'] },
-  'KITCHEN-001': { id: 'KITCHEN-001', name: 'Kitchen Staff', roles: ['kitchen'] },
-  'RUNNER-001': { id: 'RUNNER-001', name: 'Runner One', roles: ['runner'] },
-}
 
 app.get('/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() })
@@ -28,12 +20,29 @@ app.post('/auth/login', async (c) => {
     return c.json({ data: null, error: 'Private ID is required' }, 400)
   }
 
-  const user = USERS[privateId]
-  if (!user) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('user_id, username, roles(name)')
+    .eq('username', privateId)
+    .single()
+
+  if (error || !data) {
     return c.json({ data: null, error: 'Invalid Private ID' }, 401)
   }
 
-  return c.json({ data: { user }, error: null })
+  const rolesData = data.roles as unknown as { name: string } | null
+  const roleName = rolesData?.name as Role | undefined
+
+  return c.json({
+    data: {
+      user: {
+        id: String(data.user_id),
+        name: data.username,
+        roles: roleName ? [roleName] : [],
+      },
+    },
+    error: null,
+  })
 })
 
 export default app

@@ -45,4 +45,39 @@ app.post('/auth/login', async (c) => {
   })
 })
 
+app.get('/floor-plan', async (c) => {
+  const { data, error } = await supabase
+    .from('floor_plans')
+    .select('*')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data, error: null })
+})
+
+app.post('/floor-plan', async (c) => {
+  const body = await c.req.json<{ id?: number; name?: string; rooms: unknown; tables: unknown }>()
+  const { id, name, rooms, tables } = body
+  const now = new Date().toISOString()
+
+  if (id) {
+    const { data, error } = await supabase
+      .from('floor_plans')
+      .update({ data: { rooms, tables }, updated_at: now })
+      .eq('id', id)
+      .select()
+      .single()
+    return c.json({ data, error: error?.message ?? null })
+  }
+
+  const { data, error } = await supabase
+    .from('floor_plans')
+    .insert({ name: name ?? 'Main Floor', data: { rooms, tables } })
+    .select()
+    .single()
+  return c.json({ data, error: error?.message ?? null })
+})
+
 export default app

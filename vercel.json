@@ -5,6 +5,7 @@
   "installCommand": "pnpm install",
   "routes": [
     { "src": "/api/(.*)", "dest": "/api/[...route]" },
+    { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

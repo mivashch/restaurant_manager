@@ -1,6 +1,8 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
-import type { Role, User } from '../packages/shared/src/index.js'
+
+type Role = 'admin' | 'waiter' | 'kitchen' | 'runner'
+type User = { id: string; name: string; roles: Role[] }
 
 const app = new Hono().basePath('/api')
 
@@ -35,4 +37,3 @@ app.post('/auth/login', async (c) => {
 })
 
 export default app
-export type { Role }

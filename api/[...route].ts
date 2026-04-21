@@ -7,9 +7,12 @@ export const config = {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const url = `https://${req.headers.host}${req.url}`
+  const method = req.method ?? 'GET'
+  const hasBody = method !== 'GET' && method !== 'HEAD'
   const request = new Request(url, {
-    method: req.method ?? 'GET',
+    method,
     headers: req.headers as Record<string, string>,
+    body: hasBody && req.body != null ? JSON.stringify(req.body) : undefined,
   })
 
   const response = await app.fetch(request)

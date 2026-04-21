@@ -3,7 +3,8 @@
   "buildCommand": "pnpm turbo run build",
   "outputDirectory": "apps/web/dist",
   "installCommand": "pnpm install",
-  "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/[...route]" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }

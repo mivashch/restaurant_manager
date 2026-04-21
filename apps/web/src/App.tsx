@@ -17,7 +17,7 @@ export default function App() {
       <main className="flex-1 flex items-center justify-center px-4">
         <div className="w-full max-w-sm">
           <h1 className="text-2xl font-semibold text-neutral-800 mb-8">
-            Sign in
+            Login
           </h1>
 
           <form action={handleSubmit} className="space-y-4">

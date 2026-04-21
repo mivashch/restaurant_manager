@@ -48,8 +48,12 @@ jobs:
 
       - name: Setup Supabase CLI
         uses: supabase/setup-cli@v1
+        with:
+          version: latest
 
       - name: Run migrations
-        run: supabase db push --project-ref bnecqktcxftrqjkvwfmp
+        run: |
+          supabase link --project-ref bnecqktcxftrqjkvwfmp
+          supabase db push
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

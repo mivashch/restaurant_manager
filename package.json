@@ -10,6 +10,7 @@
     "format": "prettier --write \"**/*.{ts,tsx,json,md}\""
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.104.0",
     "@types/node": "^22.19.17",
     "@vercel/node": "^5.7.2",
     "hono": "^4.7.7"

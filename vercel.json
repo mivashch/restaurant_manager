@@ -4,6 +4,6 @@
   "outputDirectory": "apps/web/dist",
   "installCommand": "pnpm install",
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api/:path*" }
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }

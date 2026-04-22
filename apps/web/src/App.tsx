@@ -172,6 +172,7 @@ export default function App() {
 
   if (activeRole === 'runner' && user) {
     return <RunnerPage user={user} onBack={() => setActiveRole(null)} />
+  }
   if (activeRole === 'waiter' || activeRole === 'runner') {
     return <WaiterPage onBack={() => setActiveRole(null)} />
   }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import type { Plan, Room, Pt } from './FloorPlanEditor'
+// import type { Plan, Room, Pt } from './FloorPlanEditor'
+import type { Plan, Room } from './FloorPlanEditor'
 
 type Status = 'available' | 'occupied'
 type TableStatuses = Record<number, Status>
@@ -9,15 +10,15 @@ const W = 1000
 const H = 650
 const TR = 18
 
-function pointInPoly(pt: Pt, poly: Pt[]): boolean {
-  let inside = false
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const { x: xi, y: yi } = poly[i], { x: xj, y: yj } = poly[j]
-    if ((yi > pt.y) !== (yj > pt.y) && pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi)
-      inside = !inside
-  }
-  return inside
-}
+// function pointInPoly(pt: Pt, poly: Pt[]): boolean {
+//   let inside = false
+//   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+//     const { x: xi, y: yi } = poly[i], { x: xj, y: yj } = poly[j]
+//     if ((yi > pt.y) !== (yj > pt.y) && pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi)
+//       inside = !inside
+//   }
+//   return inside
+// }
 
 function RoomPolygon({ room }: { room: Room }) {
   return (

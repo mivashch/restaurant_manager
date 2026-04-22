@@ -64,35 +64,35 @@ export default function RunnerPage({
   const [orders, setOrders] = useState<RunnerOrder[]>([])
   const [loading, setLoading] = useState(true)
 
-  async function loadOrders() {
-    try {
-      const res = await fetch('/api/orders/runner')
-      const json = await res.json()
+    useEffect(() => {
+    async function loadOrders() {
+        try {
+        const res = await fetch('/api/orders/runner')
+        const json = await res.json()
 
-      if (!res.ok || json.error) {
+        if (!res.ok || json.error) {
+            setOrders(MOCK_ORDERS)
+            return
+        }
+
+        const normalized = (json.data ?? []).map((order: RunnerOrder) => ({
+            ...order,
+            item_name: order.item_name ?? 'Ribeye Steak',
+            quantity: order.quantity ?? 1,
+            ordered_by: order.ordered_by ?? user.name,
+            prepared_by: order.prepared_by ?? 'Kitchen',
+        }))
+
+        setOrders(normalized.length > 0 ? normalized : MOCK_ORDERS)
+        } catch {
         setOrders(MOCK_ORDERS)
-        return
-      }
-
-      const normalized = (json.data ?? []).map((order: RunnerOrder) => ({
-        ...order,
-        item_name: order.item_name ?? 'Ribeye Steak',
-        quantity: order.quantity ?? 1,
-        ordered_by: order.ordered_by ?? user.name,
-        prepared_by: order.prepared_by ?? 'Kitchen',
-      }))
-
-      setOrders(normalized.length > 0 ? normalized : MOCK_ORDERS)
-    } catch {
-      setOrders(MOCK_ORDERS)
-    } finally {
-      setLoading(false)
+        } finally {
+        setLoading(false)
+        }
     }
-  }
 
-  useEffect(() => {
     loadOrders()
-  }, [])
+    }, [user.name])
 
   async function handleDelivered(orderId: number) {
     try {

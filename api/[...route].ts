@@ -12,7 +12,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const request = new Request(url, {
     method,
     headers: req.headers as Record<string, string>,
-    body: hasBody && req.body != null ? JSON.stringify(req.body) : undefined,
+    body: hasBody && req.body != null
+      ? (typeof req.body === 'string' ? req.body : JSON.stringify(req.body))
+      : undefined,
   })
 
   const response = await app.fetch(request)

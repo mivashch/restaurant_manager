@@ -44,10 +44,11 @@ function isObstacle(verts: Pt[], rooms: Room[]) {
   return rooms.some(r => !r.obstacle && pointInPoly(c, r.vertices))
 }
 
-function canPlace(pt: Pt, rooms: Room[]) {
+function canPlace(pt: Pt, rooms: Room[], tables: TableEl[]) {
   const inRoom = rooms.some(r => !r.obstacle && pointInPoly(pt, r.vertices))
   const inObst = rooms.some(r => r.obstacle && pointInPoly(pt, r.vertices))
-  return inRoom && !inObst
+  const tooClose = tables.some(t => dist(pt, { x: t.x, y: t.y }) < TR * 2)
+  return inRoom && !inObst && !tooClose
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -100,7 +101,7 @@ export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
       }
     }
 
-    if (mode === 'place' && canPlace(p, rooms)) {
+    if (mode === 'place' && canPlace(p, rooms, tables)) {
       const maxNum = tables.length ? Math.max(...tables.map(t => t.num)) : 0
       setTables(ts => [...ts, { id: uid(), num: maxNum + 1, x: p.x, y: p.y }])
     }
@@ -108,7 +109,14 @@ export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
 
   function eraseRoom(id: string, e: React.MouseEvent) {
     e.stopPropagation()
+    const room = rooms.find(r => r.id === id)
     setRooms(rs => rs.filter(r => r.id !== id))
+    if (room && !room.obstacle) {
+      setTables(ts => {
+        const kept = ts.filter(t => !pointInPoly({ x: t.x, y: t.y }, room.vertices))
+        return kept.map((t, i) => ({ ...t, num: i + 1 }))
+      })
+    }
   }
 
   function eraseTable(id: string, e: React.MouseEvent) {
@@ -121,10 +129,13 @@ export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
 
   async function save() {
     setSaving(true)
-    await onSave({ rooms, tables, id: planId })
-    setSaving(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    try {
+      await onSave({ rooms, tables, id: planId })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const nearFirst = draft.length >= 3 && cursor !== null && dist(cursor, draft[0]) < SNAP
@@ -248,8 +259,8 @@ export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
           {/* Table cursor preview */}
           {mode === 'place' && cursor && (
             <circle cx={cursor.x} cy={cursor.y} r={TR}
-              fill={canPlace(cursor, rooms) ? '#1f2937' : '#e5e7eb'}
-              stroke={canPlace(cursor, rooms) ? 'white' : '#d1d5db'}
+              fill={canPlace(cursor, rooms, tables) ? '#1f2937' : '#e5e7eb'}
+              stroke={canPlace(cursor, rooms, tables) ? 'white' : '#d1d5db'}
               strokeWidth={2} opacity={0.55}
               style={{ pointerEvents: 'none' }}
             />

@@ -1,8 +1,7 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { supabase } from './supabase.js'
-
-type Role = 'admin' | 'waiter' | 'kitchen' | 'runner'
+import type { Role } from '@restaurant-manager/shared'
 
 const app = new Hono().basePath('/api')
 

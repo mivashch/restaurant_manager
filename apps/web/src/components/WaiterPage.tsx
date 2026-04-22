@@ -2,13 +2,24 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Plan, Room } from './FloorPlanEditor'
 
-type Status = 'available' | 'occupied'
+type Status = 'available' | 'occupied' | 'reserved'
 type TableStatuses = Record<number, Status>
 
-const W = 1000
-const H = 650
-const TR = 18
+const SVG_WIDTH = 1000
+const SVG_HEIGHT = 650
+const TABLE_RADIUS = 18
 
+const STATUS_CYCLE: Record<Status, Status> = {
+  available: 'occupied',
+  occupied: 'reserved',
+  reserved: 'available',
+}
+
+const STATUS_COLOR: Record<Status, string> = {
+  available: '#22c55e',
+  occupied: '#ef4444',
+  reserved: '#f59e0b',
+}
 
 function RoomPolygon({ room }: { room: Room }) {
   return (
@@ -29,19 +40,22 @@ export default function WaiterPage({ onBack }: Props) {
   const [plan, setPlan] = useState<Plan | null>(null)
   const [statuses, setStatuses] = useState<TableStatuses>({})
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
 
-  // load floor plan
   useEffect(() => {
     fetch('/api/floor-plan')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then(json => {
         if (json.data) setPlan(json.data.data as Plan)
       })
+      .catch(() => setError('Failed to load floor plan'))
       .finally(() => setLoading(false))
   }, [])
 
-  // load initial statuses
   useEffect(() => {
     supabase
       .from('restaurant_tables')
@@ -54,7 +68,6 @@ export default function WaiterPage({ onBack }: Props) {
       })
   }, [])
 
-  // realtime subscription
   useEffect(() => {
     const channel = supabase
       .channel('table-status-changes')
@@ -62,9 +75,20 @@ export default function WaiterPage({ onBack }: Props) {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'restaurant_tables' },
         payload => {
-          const row = (payload.new ?? payload.old) as { table_number: number; status: Status }
-          if (row?.table_number != null) {
-            setStatuses(prev => ({ ...prev, [row.table_number]: row.status }))
+          if (payload.eventType === 'DELETE') {
+            const old = payload.old as { table_number: number }
+            if (old?.table_number != null) {
+              setStatuses(prev => {
+                const next = { ...prev }
+                delete next[old.table_number]
+                return next
+              })
+            }
+          } else {
+            const row = payload.new as { table_number: number; status: Status }
+            if (row?.table_number != null) {
+              setStatuses(prev => ({ ...prev, [row.table_number]: row.status }))
+            }
           }
         }
       )
@@ -78,13 +102,16 @@ export default function WaiterPage({ onBack }: Props) {
 
   async function toggleTable(num: number) {
     const current = statuses[num] ?? 'available'
-    const next: Status = current === 'available' ? 'occupied' : 'available'
+    const next = STATUS_CYCLE[current]
     setStatuses(prev => ({ ...prev, [num]: next }))
-    await fetch(`/api/tables/${num}/status`, {
+    const res = await fetch(`/api/tables/${num}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: next }),
     })
+    if (!res.ok) {
+      setStatuses(prev => ({ ...prev, [num]: current }))
+    }
   }
 
   return (
@@ -113,18 +140,24 @@ export default function WaiterPage({ onBack }: Props) {
               <span className="w-3 h-3 rounded-full bg-red-500 inline-block" />
               Occupied
             </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-3 h-3 rounded-full bg-amber-400 inline-block" />
+              Reserved
+            </span>
           </div>
         </div>
 
         {loading ? (
           <p className="text-sm text-neutral-400 animate-pulse">Loading…</p>
+        ) : error ? (
+          <p className="text-sm text-red-400">{error}</p>
         ) : !plan || plan.tables.length === 0 ? (
           <p className="text-sm text-neutral-400">No floor plan configured yet.</p>
         ) : (
           <div className="rounded-xl overflow-hidden border border-neutral-200 bg-white">
             <svg
               ref={svgRef}
-              viewBox={`0 0 ${W} ${H}`}
+              viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}
               className="w-full"
               style={{ height: '70vh' }}
             >
@@ -133,7 +166,7 @@ export default function WaiterPage({ onBack }: Props) {
                   <path d="M40 0L0 0 0 40" fill="none" stroke="#f3f4f6" strokeWidth="1" />
                 </pattern>
               </defs>
-              <rect width={W} height={H} fill="url(#grid)" />
+              <rect width={SVG_WIDTH} height={SVG_HEIGHT} fill="url(#grid)" />
 
               {plan.rooms.map(room => (
                 <RoomPolygon key={room.id} room={room} />
@@ -141,7 +174,6 @@ export default function WaiterPage({ onBack }: Props) {
 
               {plan.tables.map(t => {
                 const status = statuses[t.num] ?? 'available'
-                const occupied = status === 'occupied'
                 return (
                   <g
                     key={t.id}
@@ -149,12 +181,12 @@ export default function WaiterPage({ onBack }: Props) {
                     className="cursor-pointer"
                   >
                     <circle
-                      cx={t.x} cy={t.y} r={TR + 4}
+                      cx={t.x} cy={t.y} r={TABLE_RADIUS + 4}
                       fill="transparent"
                     />
                     <circle
-                      cx={t.x} cy={t.y} r={TR}
-                      fill={occupied ? '#ef4444' : '#22c55e'}
+                      cx={t.x} cy={t.y} r={TABLE_RADIUS}
+                      fill={STATUS_COLOR[status]}
                       stroke="white"
                       strokeWidth={2}
                       className="transition-colors duration-300"

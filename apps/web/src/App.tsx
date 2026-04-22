@@ -3,6 +3,8 @@ import type { User, Role } from '@restaurant-manager/shared'
 import FloorPlanEditor, { type Plan } from './components/FloorPlanEditor'
 import RunnerPage from './components/RunnerPage'
 import WaiterPage from './components/WaiterPage'
+import KitchenPage from './components/KitchenPage'
+
 
 const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
@@ -175,6 +177,9 @@ export default function App() {
   }
   if (activeRole === 'waiter' || activeRole === 'runner') {
     return <WaiterPage onBack={() => setActiveRole(null)} />
+  }
+  if (activeRole === 'kitchen' && user) {
+    return <KitchenPage user={user} onBack={() => setActiveRole(null)} />
   }
 
   if (activeRole) {

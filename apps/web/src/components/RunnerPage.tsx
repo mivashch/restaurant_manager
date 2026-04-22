@@ -134,51 +134,52 @@ export default function RunnerPage({
             {orders.map(order => (
               <div
                 key={order.order_id}
-                className="bg-white rounded-2xl border border-neutral-200 shadow-sm p-4 w-full"
-              >
+                className="bg-white rounded-2xl shadow-sm p-4 w-full border-2 border-emerald-300"
+                >
                 <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-[26px] font-semibold text-neutral-900 leading-none">
-                      {order.item_name}
+                    <div>
+                    <p className="text-xl font-semibold text-neutral-900 leading-none">
+                        {order.item_name ?? 'Order'}
                     </p>
-                    <p className="mt-2 text-[22px] text-neutral-600 leading-none">
-                      Table {order.restaurant_tables?.table_number ?? '—'} • Quantity: {order.quantity}
-                    </p>
-                  </div>
 
-                  <p className="text-[20px] text-slate-400 whitespace-nowrap">
-                    Ready: {formatReadyTime(order.created_at)}
-                  </p>
+                    <p className="mt-2 text-sm text-neutral-600 leading-none">
+                        Table {order.restaurant_tables?.table_number ?? '—'} • Quantity: {order.quantity ?? 1}
+                    </p>
+                    </div>
+
+                    <p className="text-sm text-slate-400 whitespace-nowrap">
+                    {formatReadyTime(order.created_at)}
+                    </p>
                 </div>
 
-                <p className="mt-4 text-[18px] text-slate-400">
-                  Ordered by {order.ordered_by} • Prepared by {order.prepared_by}
+                <p className="mt-4 text-sm text-slate-400">
+                    Ordered by {order.ordered_by ?? 'Waiter'} • Prepared by {order.prepared_by ?? 'Kitchen'}
                 </p>
 
                 <button
-                  onClick={() => handleDelivered(order.order_id)}
-                  className="mt-5 w-full h-14 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-[24px] font-semibold flex items-center justify-center gap-3 transition"
+                    onClick={() => handleDelivered(order.order_id)}
+                    className="mt-5 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold transition flex items-center justify-center gap-2"
                 >
-                  <svg
-                    width="22"
-                    height="22"
+                    <svg
+                    width="18"
+                    height="18"
                     viewBox="0 0 24 24"
                     fill="none"
                     className="shrink-0"
                     aria-hidden="true"
-                  >
+                    >
                     <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
                     <path
-                      d="M8 12.5L10.8 15.3L16.5 9.5"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
+                        d="M8 12.5L10.8 15.3L16.5 9.5"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
                     />
-                  </svg>
-                  Mark as Delivered
+                    </svg>
+                    Mark as Delivered
                 </button>
-              </div>
+                </div>
             ))}
           </div>
         )}

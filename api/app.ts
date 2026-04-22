@@ -111,6 +111,15 @@ app.get('/orders/runner', async (c) => {
       created_at,
       restaurant_tables (
         table_number
+      ),
+      waiter:users!orders_waiter_id_fkey (
+        username
+      ),
+      order_items (
+        quantity,
+        menu_items (
+          name
+        )
       )
     `)
     .eq('status', 'ready')
@@ -120,7 +129,27 @@ app.get('/orders/runner', async (c) => {
     return c.json({ data: null, error: error.message }, 500)
   }
 
-  return c.json({ data, error: null })
+  const normalized = (data ?? []).map((order: any) => {
+    const items = order.order_items ?? []
+    const firstItem = items[0]
+    const totalQuantity = items.reduce(
+      (sum: number, item: any) => sum + Number(item.quantity ?? 0),
+      0,
+    )
+
+    return {
+      order_id: order.order_id,
+      status: order.status,
+      created_at: order.created_at,
+      restaurant_tables: order.restaurant_tables,
+      item_name: firstItem?.menu_items?.name ?? 'Order',
+      quantity: totalQuantity || 1,
+      ordered_by: order.waiter?.username ?? 'Waiter',
+      prepared_by: 'Kitchen',
+    }
+  })
+
+  return c.json({ data: normalized, error: null })
 })
 
 app.patch('/orders/:id/take', async (c) => {
@@ -135,6 +164,99 @@ app.patch('/orders/:id/take', async (c) => {
     .update({ status: 'served' })
     .eq('order_id', orderId)
     .eq('status', 'ready')
+    .select()
+    .single()
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
+})
+
+app.get('/orders/kitchen', async (c) => {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(`
+      order_id,
+      status,
+      created_at,
+      restaurant_tables (
+        table_number
+      ),
+      waiter:users!orders_waiter_id_fkey (
+        username
+      ),
+      order_items (
+        quantity,
+        menu_items (
+          name
+        )
+      )
+    `)
+    .in('status', ['open', 'new', 'preparing'])
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  const normalized = (data ?? []).map((order: any) => {
+    const items = order.order_items ?? []
+    const firstItem = items[0]
+    const totalQuantity = items.reduce(
+      (sum: number, item: any) => sum + Number(item.quantity ?? 0),
+      0,
+    )
+
+    return {
+      order_id: order.order_id,
+      status: order.status,
+      created_at: order.created_at,
+      restaurant_tables: order.restaurant_tables,
+      item_name: firstItem?.menu_items?.name ?? 'Order',
+      quantity: totalQuantity || 1,
+      ordered_by: order.waiter?.username ?? 'Waiter',
+    }
+  })
+
+  return c.json({ data: normalized, error: null })
+})
+
+app.patch('/orders/:id/start', async (c) => {
+  const orderId = Number(c.req.param('id'))
+
+  if (!orderId) {
+    return c.json({ data: null, error: 'Invalid order id' }, 400)
+  }
+
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'preparing' })
+    .eq('order_id', orderId)
+    .in('status', ['open', 'new'])
+    .select()
+    .single()
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
+})
+
+app.patch('/orders/:id/ready', async (c) => {
+  const orderId = Number(c.req.param('id'))
+
+  if (!orderId) {
+    return c.json({ data: null, error: 'Invalid order id' }, 400)
+  }
+
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'ready' })
+    .eq('order_id', orderId)
+    .eq('status', 'preparing')
     .select()
     .single()
 

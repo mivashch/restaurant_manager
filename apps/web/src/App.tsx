@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react'
 import type { User, Role } from '@restaurant-manager/shared'
 import FloorPlanEditor, { type Plan } from './components/FloorPlanEditor'
+import RunnerPage from './components/RunnerPage'
+import WaiterPage from './components/WaiterPage'
+import KitchenPage from './components/KitchenPage'
+
 
 const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
@@ -167,13 +171,26 @@ export default function App() {
     return <AdminPage onBack={() => setActiveRole(null)} />
   }
 
+
+  if (activeRole === 'runner' && user) {
+    return <RunnerPage user={user} onBack={() => setActiveRole(null)} />
+  }
+  if (activeRole === 'waiter' || activeRole === 'runner') {
+    return <WaiterPage onBack={() => setActiveRole(null)} />
+  }
+  if (activeRole === 'kitchen' && user) {
+    return <KitchenPage user={user} onBack={() => setActiveRole(null)} />
+  }
+
   if (activeRole) {
     return (
       <div className="min-h-screen bg-neutral-50 flex flex-col">
         <Header />
         <main className="flex-1 flex items-center justify-center px-4">
           <div className="w-full max-w-sm text-center">
-            <p className="text-neutral-400 text-sm mb-2 uppercase tracking-widest font-medium">{activeRole}</p>
+            <p className="text-neutral-400 text-sm mb-2 uppercase tracking-widest font-medium">
+              {activeRole}
+            </p>
             <h1 className="text-2xl font-semibold text-neutral-800 mb-8">Dashboard</h1>
             <button
               onClick={() => setActiveRole(null)}

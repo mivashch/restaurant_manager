@@ -47,6 +47,10 @@ Supabase provides PostgreSQL with REST and Realtime API, authentication and stor
 
 ## Architecture
 
+Architecture here is a full‑stack TypeScript monorepo managed with pnpm and Turborepo, where a Vite‑built React 19 frontend communicates via TanStack Query with a Hono API deployed as Vercel Serverless Functions. Shared types and validation schemas in a central packages/shared ensure end‑to‑end type safety. Supabase provides the PostgreSQL database, authentication, and real‑time subscriptions that instantly synchronise table and order state across all connected devices. A GitHub Actions pipeline enforces linting, type‑checking, and build integrity before automatic deployment to Vercel preview and production environments.
+
+Below is the file structure where directories corresponding to the architecure can be seen. Here, in /app/web is the React frontend part, in /apps/api the Hono API part that is deployed as Vercel Serverless Functions, and lastly the /packages/shared forder for sharing the types between the react and hono.
+
 ```
 restaurant_manager/
 ├── api/[...route].ts        # Vercel Serverless entry (Hono catch-all)

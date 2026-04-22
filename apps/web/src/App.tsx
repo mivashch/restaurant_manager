@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import type { User, Role } from '@restaurant-manager/shared'
 import FloorPlanEditor, { type Plan } from './components/FloorPlanEditor'
 import RunnerPage from './components/RunnerPage'
+import WaiterPage from './components/WaiterPage'
 
 const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
@@ -168,8 +169,11 @@ export default function App() {
     return <AdminPage onBack={() => setActiveRole(null)} />
   }
 
+
   if (activeRole === 'runner' && user) {
     return <RunnerPage user={user} onBack={() => setActiveRole(null)} />
+  if (activeRole === 'waiter' || activeRole === 'runner') {
+    return <WaiterPage onBack={() => setActiveRole(null)} />
   }
 
   if (activeRole) {

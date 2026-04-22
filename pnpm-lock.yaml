@@ -73,6 +73,9 @@ importers:
       '@restaurant-manager/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@supabase/supabase-js':
+        specifier: ^2.104.0
+        version: 2.104.0
       react:
         specifier: ^19.1.0
         version: 19.2.5

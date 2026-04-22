@@ -69,13 +69,18 @@ export default function WaiterPage({ onBack }: Props) {
       .channel('table-status-changes')
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'restaurant_tables' },
+        { event: '*', schema: 'public', table: 'restaurant_tables' },
         payload => {
-          const row = payload.new as { table_number: number; status: Status }
-          setStatuses(prev => ({ ...prev, [row.table_number]: row.status }))
+          const row = (payload.new ?? payload.old) as { table_number: number; status: Status }
+          if (row?.table_number != null) {
+            setStatuses(prev => ({ ...prev, [row.table_number]: row.status }))
+          }
         }
       )
-      .subscribe()
+      .subscribe((status, err) => {
+        if (err) console.error('Realtime subscription error:', err)
+        else console.log('Realtime channel status:', status)
+      })
 
     return () => { supabase.removeChannel(channel) }
   }, [])

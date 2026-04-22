@@ -96,8 +96,7 @@ app.patch('/tables/:num/status', async (c) => {
 
   const { data, error } = await supabase
     .from('restaurant_tables')
-    .update({ status })
-    .eq('table_number', num)
+    .upsert({ table_number: num, status }, { onConflict: 'table_number' })
     .select()
     .single()
 

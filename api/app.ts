@@ -102,4 +102,47 @@ app.patch('/tables/:num/status', async (c) => {
   return c.json({ data, error: error?.message ?? null })
 })
 
+app.get('/orders/runner', async (c) => {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(`
+      order_id,
+      status,
+      created_at,
+      restaurant_tables (
+        table_number
+      )
+    `)
+    .eq('status', 'ready')
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
+})
+
+app.patch('/orders/:id/take', async (c) => {
+  const orderId = Number(c.req.param('id'))
+
+  if (!orderId) {
+    return c.json({ data: null, error: 'Invalid order id' }, 400)
+  }
+
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'served' })
+    .eq('order_id', orderId)
+    .eq('status', 'ready')
+    .select()
+    .single()
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
+})
+
 export default app

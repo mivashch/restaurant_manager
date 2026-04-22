@@ -5,6 +5,40 @@ import type { Role } from '@restaurant-manager/shared'
 
 const app = new Hono().basePath('/api')
 
+type MockOrder = {
+  order_id: number
+  status: 'open' | 'new' | 'preparing' | 'ready' | 'served'
+  created_at: string
+  restaurant_tables: {
+    table_number: number
+  } | null
+  item_name: string
+  quantity: number
+  ordered_by: string
+  prepared_by?: string
+}
+
+let mockOrders: MockOrder[] = [
+  {
+    order_id: 201,
+    status: 'open',
+    created_at: new Date().toISOString(),
+    restaurant_tables: { table_number: 4 },
+    item_name: 'Grilled Salmon',
+    quantity: 1,
+    ordered_by: 'Joanne Doje',
+  },
+  {
+    order_id: 202,
+    status: 'preparing',
+    created_at: new Date().toISOString(),
+    restaurant_tables: { table_number: 2 },
+    item_name: 'Caesar Salad',
+    quantity: 2,
+    ordered_by: 'Joanne Doje',
+  },
+]
+
 app.use('*', cors())
 
 app.get('/health', (c) => {
@@ -52,16 +86,31 @@ app.get('/floor-plan', async (c) => {
     .limit(1)
     .maybeSingle()
 
-  if (error) return c.json({ data: null, error: error.message }, 500)
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
   return c.json({ data, error: null })
 })
 
 app.post('/floor-plan', async (c) => {
-  const body = await c.req.json<{ id?: number; name?: string; rooms: unknown; tables: Array<{ num: number }> }>()
+  const body = await c.req.json<{
+    id?: number
+    name?: string
+    rooms: unknown
+    tables: Array<{ num: number }>
+  }>()
+
   const { id, name, rooms, tables } = body
   const now = new Date().toISOString()
 
-  let result
+  let result:
+    | { data: unknown; error: { message: string } | null }
+    | {
+        data: unknown
+        error: Error | null
+      }
+
   if (id) {
     const { data, error } = await supabase
       .from('floor_plans')
@@ -69,6 +118,7 @@ app.post('/floor-plan', async (c) => {
       .eq('id', id)
       .select()
       .single()
+
     result = { data, error }
   } else {
     const { data, error } = await supabase
@@ -76,17 +126,24 @@ app.post('/floor-plan', async (c) => {
       .insert({ name: name ?? 'Main Floor', data: { rooms, tables } })
       .select()
       .single()
+
     result = { data, error }
   }
 
   if (!result.error && tables?.length) {
     await supabase.from('restaurant_tables').upsert(
-      tables.map(t => ({ table_number: t.num, status: 'available' })),
-      { onConflict: 'table_number', ignoreDuplicates: true }
+      tables.map((t) => ({
+        table_number: t.num,
+        status: 'available',
+      })),
+      { onConflict: 'table_number', ignoreDuplicates: true },
     )
   }
 
-  return c.json({ data: result.data, error: result.error?.message ?? null })
+  return c.json({
+    data: result.data,
+    error: result.error?.message ?? null,
+  })
 })
 
 app.patch('/tables/:num/status', async (c) => {
@@ -102,54 +159,62 @@ app.patch('/tables/:num/status', async (c) => {
   return c.json({ data, error: error?.message ?? null })
 })
 
-app.get('/orders/runner', async (c) => {
-  const { data, error } = await supabase
-    .from('orders')
-    .select(`
-      order_id,
-      status,
-      created_at,
-      restaurant_tables (
-        table_number
-      ),
-      waiter:users!orders_waiter_id_fkey (
-        username
-      ),
-      order_items (
-        quantity,
-        menu_items (
-          name
-        )
-      )
-    `)
-    .eq('status', 'ready')
-    .order('created_at', { ascending: true })
+app.get('/orders/kitchen', (c) => {
+  const data = mockOrders.filter((order) =>
+    ['open', 'new', 'preparing'].includes(order.status),
+  )
 
-  if (error) {
-    return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data, error: null })
+})
+
+app.patch('/orders/:id/start', (c) => {
+  const orderId = Number(c.req.param('id'))
+
+  if (!orderId) {
+    return c.json({ data: null, error: 'Invalid order id' }, 400)
   }
 
-  const normalized = (data ?? []).map((order: any) => {
-    const items = order.order_items ?? []
-    const firstItem = items[0]
-    const totalQuantity = items.reduce(
-      (sum: number, item: any) => sum + Number(item.quantity ?? 0),
-      0,
-    )
+  const order = mockOrders.find((o) => o.order_id === orderId)
 
-    return {
-      order_id: order.order_id,
-      status: order.status,
-      created_at: order.created_at,
-      restaurant_tables: order.restaurant_tables,
-      item_name: firstItem?.menu_items?.name ?? 'Order',
-      quantity: totalQuantity || 1,
-      ordered_by: order.waiter?.username ?? 'Waiter',
-      prepared_by: 'Kitchen',
-    }
-  })
+  if (!order) {
+    return c.json({ data: null, error: 'Order not found' }, 404)
+  }
 
-  return c.json({ data: normalized, error: null })
+  if (!['open', 'new'].includes(order.status)) {
+    return c.json({ data: null, error: 'Order cannot be started' }, 400)
+  }
+
+  order.status = 'preparing'
+
+  return c.json({ data: order, error: null })
+})
+
+app.patch('/orders/:id/ready', (c) => {
+  const orderId = Number(c.req.param('id'))
+
+  if (!orderId) {
+    return c.json({ data: null, error: 'Invalid order id' }, 400)
+  }
+
+  const order = mockOrders.find((o) => o.order_id === orderId)
+
+  if (!order) {
+    return c.json({ data: null, error: 'Order not found' }, 404)
+  }
+
+  if (order.status !== 'preparing') {
+    return c.json({ data: null, error: 'Order is not preparing' }, 400)
+  }
+
+  order.status = 'ready'
+  order.prepared_by = 'Kitchen'
+
+  return c.json({ data: order, error: null })
+})
+
+app.get('/orders/runner', (c) => {
+  const data = mockOrders.filter((order) => order.status === 'ready')
+  return c.json({ data, error: null })
 })
 
 app.patch('/orders/:id/take', async (c) => {
@@ -159,112 +224,19 @@ app.patch('/orders/:id/take', async (c) => {
     return c.json({ data: null, error: 'Invalid order id' }, 400)
   }
 
-  const { data, error } = await supabase
-    .from('orders')
-    .update({ status: 'served' })
-    .eq('order_id', orderId)
-    .eq('status', 'ready')
-    .select()
-    .single()
+  const order = mockOrders.find((o) => o.order_id === orderId)
 
-  if (error) {
-    return c.json({ data: null, error: error.message }, 500)
+  if (!order) {
+    return c.json({ data: null, error: 'Order not found' }, 404)
   }
 
-  return c.json({ data, error: null })
-})
-
-app.get('/orders/kitchen', async (c) => {
-  const { data, error } = await supabase
-    .from('orders')
-    .select(`
-      order_id,
-      status,
-      created_at,
-      restaurant_tables (
-        table_number
-      ),
-      waiter:users!orders_waiter_id_fkey (
-        username
-      ),
-      order_items (
-        quantity,
-        menu_items (
-          name
-        )
-      )
-    `)
-    .in('status', ['open', 'new', 'preparing'])
-    .order('created_at', { ascending: true })
-
-  if (error) {
-    return c.json({ data: null, error: error.message }, 500)
+  if (order.status !== 'ready') {
+    return c.json({ data: null, error: 'Order is not ready' }, 400)
   }
 
-  const normalized = (data ?? []).map((order: any) => {
-    const items = order.order_items ?? []
-    const firstItem = items[0]
-    const totalQuantity = items.reduce(
-      (sum: number, item: any) => sum + Number(item.quantity ?? 0),
-      0,
-    )
+  order.status = 'served'
 
-    return {
-      order_id: order.order_id,
-      status: order.status,
-      created_at: order.created_at,
-      restaurant_tables: order.restaurant_tables,
-      item_name: firstItem?.menu_items?.name ?? 'Order',
-      quantity: totalQuantity || 1,
-      ordered_by: order.waiter?.username ?? 'Waiter',
-    }
-  })
-
-  return c.json({ data: normalized, error: null })
-})
-
-app.patch('/orders/:id/start', async (c) => {
-  const orderId = Number(c.req.param('id'))
-
-  if (!orderId) {
-    return c.json({ data: null, error: 'Invalid order id' }, 400)
-  }
-
-  const { data, error } = await supabase
-    .from('orders')
-    .update({ status: 'preparing' })
-    .eq('order_id', orderId)
-    .in('status', ['open', 'new'])
-    .select()
-    .single()
-
-  if (error) {
-    return c.json({ data: null, error: error.message }, 500)
-  }
-
-  return c.json({ data, error: null })
-})
-
-app.patch('/orders/:id/ready', async (c) => {
-  const orderId = Number(c.req.param('id'))
-
-  if (!orderId) {
-    return c.json({ data: null, error: 'Invalid order id' }, 400)
-  }
-
-  const { data, error } = await supabase
-    .from('orders')
-    .update({ status: 'ready' })
-    .eq('order_id', orderId)
-    .eq('status', 'preparing')
-    .select()
-    .single()
-
-  if (error) {
-    return c.json({ data: null, error: error.message }, 500)
-  }
-
-  return c.json({ data, error: null })
+  return c.json({ data: order, error: null })
 })
 
 export default app

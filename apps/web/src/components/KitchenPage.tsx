@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { User } from '@restaurant-manager/shared'
 
 type KitchenOrder = {
@@ -11,31 +11,7 @@ type KitchenOrder = {
   item_name?: string
   quantity?: number
   ordered_by?: string
-  is_mock?: boolean
 }
-
-const MOCK_ORDERS: KitchenOrder[] = [
-  {
-    order_id: 201,
-    status: 'open',
-    created_at: new Date().toISOString(),
-    restaurant_tables: { table_number: 4 },
-    item_name: 'Grilled Salmon',
-    quantity: 1,
-    ordered_by: 'Joanne Doje',
-    is_mock: true,
-  },
-  {
-    order_id: 202,
-    status: 'preparing',
-    created_at: new Date().toISOString(),
-    restaurant_tables: { table_number: 2 },
-    item_name: 'Caesar Salad',
-    quantity: 2,
-    ordered_by: 'Joanne Doje',
-    is_mock: true,
-  },
-]
 
 function formatTime(value: string) {
   return new Date(value).toLocaleTimeString([], {
@@ -53,40 +29,26 @@ export default function KitchenPage({
 }) {
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [loading, setLoading] = useState(true)
-  const seededMocks = useRef(false)
-
-  async function loadOrders(silent = false) {
-    try {
-      const res = await fetch('/api/orders/kitchen')
-      const json = await res.json().catch(() => null)
-
-      if (!res.ok || json?.error) {
-        if (!seededMocks.current) {
-          setOrders(MOCK_ORDERS)
-          seededMocks.current = true
-        }
-        return
-      }
-
-      const data = json?.data ?? []
-
-      if (data.length > 0) {
-        setOrders(data)
-      } else if (!seededMocks.current) {
-        setOrders(MOCK_ORDERS)
-        seededMocks.current = true
-      }
-    } catch {
-      if (!seededMocks.current) {
-        setOrders(MOCK_ORDERS)
-        seededMocks.current = true
-      }
-    } finally {
-      if (!silent) setLoading(false)
-    }
-  }
 
   useEffect(() => {
+    async function loadOrders(silent = false) {
+      try {
+        const res = await fetch('/api/orders/kitchen')
+        const json = await res.json().catch(() => null)
+
+        if (!res.ok || json?.error) {
+          if (!silent) setOrders([])
+          return
+        }
+
+        setOrders(json?.data ?? [])
+      } catch {
+        if (!silent) setOrders([])
+      } finally {
+        if (!silent) setLoading(false)
+      }
+    }
+
     loadOrders()
 
     const interval = window.setInterval(() => {
@@ -97,20 +59,6 @@ export default function KitchenPage({
   }, [])
 
   async function handleStart(orderId: number) {
-    const currentOrder = orders.find(order => order.order_id === orderId)
-    if (!currentOrder) return
-
-    if (currentOrder.is_mock) {
-      setOrders(prev =>
-        prev.map(order =>
-          order.order_id === orderId
-            ? { ...order, status: 'preparing' }
-            : order,
-        ),
-      )
-      return
-    }
-
     try {
       const res = await fetch(`/api/orders/${orderId}/start`, {
         method: 'PATCH',
@@ -130,19 +78,11 @@ export default function KitchenPage({
         ),
       )
     } catch {
-      // TODO
+      //
     }
   }
 
   async function handleReady(orderId: number) {
-    const currentOrder = orders.find(order => order.order_id === orderId)
-    if (!currentOrder) return
-
-    if (currentOrder.is_mock) {
-      setOrders(prev => prev.filter(order => order.order_id !== orderId))
-      return
-    }
-
     try {
       const res = await fetch(`/api/orders/${orderId}/ready`, {
         method: 'PATCH',

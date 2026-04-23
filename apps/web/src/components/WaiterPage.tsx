@@ -4,6 +4,7 @@ import type { Plan, Room } from './FloorPlanEditor'
 
 type Status = 'available' | 'occupied' | 'reserved'
 type TableStatuses = Record<number, Status>
+type TableIds = Record<number, number>
 
 const SVG_WIDTH = 1000
 const SVG_HEIGHT = 650
@@ -39,6 +40,7 @@ interface Props {
 export default function WaiterPage({ onBack }: Props) {
   const [plan, setPlan] = useState<Plan | null>(null)
   const [statuses, setStatuses] = useState<TableStatuses>({})
+  const [tableIds, setTableIds] = useState<TableIds>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
@@ -63,14 +65,19 @@ export default function WaiterPage({ onBack }: Props) {
   useEffect(() => {
     supabase
       .from('restaurant_tables')
-      .select('table_number, status')
+      .select('table_id, table_number, status')
       .then(({ data }) => {
         if (!data) return
         const map: TableStatuses = {}
+        const idMap: TableIds = {}
         data.forEach((t) => {
           map[t.table_number] = t.status as Status
+          if (typeof t.table_id === 'number') {
+            idMap[t.table_number] = t.table_id
+          }
         })
         setStatuses(map)
+        setTableIds(idMap)
       })
   }, [])
 
@@ -89,14 +96,29 @@ export default function WaiterPage({ onBack }: Props) {
                 delete next[old.table_number]
                 return next
               })
+              setTableIds((prev) => {
+                const next = { ...prev }
+                delete next[old.table_number]
+                return next
+              })
             }
           } else {
-            const row = payload.new as { table_number: number; status: Status }
+            const row = payload.new as {
+              table_id: number
+              table_number: number
+              status: Status
+            }
             if (row?.table_number != null) {
               setStatuses((prev) => ({
                 ...prev,
                 [row.table_number]: row.status,
               }))
+              if (typeof row.table_id === 'number') {
+                setTableIds((prev) => ({
+                  ...prev,
+                  [row.table_number]: row.table_id,
+                }))
+              }
             }
           }
         },
@@ -131,12 +153,57 @@ export default function WaiterPage({ onBack }: Props) {
     setOrderModalOpen(true)
   }
 
+  async function resolveTableId(tableNumber: number): Promise<number | null> {
+    const cachedId = tableIds[tableNumber]
+    if (cachedId) return cachedId
+
+    const lookup = await supabase
+      .from('restaurant_tables')
+      .select('table_id')
+      .eq('table_number', tableNumber)
+      .maybeSingle()
+
+    if (!lookup.error && lookup.data?.table_id) {
+      setTableIds((prev) => ({ ...prev, [tableNumber]: lookup.data.table_id }))
+      return lookup.data.table_id
+    }
+
+    const status = statuses[tableNumber] ?? 'occupied'
+    const syncRes = await fetch(`/api/tables/${tableNumber}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    })
+
+    if (!syncRes.ok) return null
+
+    const refreshed = await supabase
+      .from('restaurant_tables')
+      .select('table_id')
+      .eq('table_number', tableNumber)
+      .single()
+
+    if (refreshed.error || !refreshed.data?.table_id) return null
+
+    setTableIds((prev) => ({
+      ...prev,
+      [tableNumber]: refreshed.data.table_id,
+    }))
+    return refreshed.data.table_id
+  }
+
   async function submitOrder(e: React.FormEvent) {
     e.preventDefault()
     if (!selectedTable || !orderItems.trim()) return
 
+    const resolvedTableId = await resolveTableId(selectedTable)
+    if (!resolvedTableId) {
+      alert('Failed to map selected table. Try again.')
+      return
+    }
+
     const { error } = await supabase.from('orders').insert({
-      table_id: selectedTable,
+      table_id: resolvedTableId,
       waiter_id: 2,
       items: orderItems,
       status: 'new',

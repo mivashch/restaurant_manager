@@ -159,6 +159,29 @@ app.patch('/tables/:num/status', async (c) => {
   return c.json({ data, error: error?.message ?? null })
 })
 
+app.post('/orders/mock', (c) => {
+  const dishes = [
+    '2x Margherita Pizza\n1x Caesar Salad',
+    '1x Beef Burger\n2x French Fries\n1x Cola',
+    '3x Spaghetti Carbonara',
+    '1x Grilled Salmon\n1x Lemonade',
+    '2x Chicken Wings\n1x Beer',
+  ]
+  const tableNum = Math.ceil(Math.random() * 5)
+  const item_name = dishes[Math.floor(Math.random() * dishes.length)]
+  const newOrder: MockOrder = {
+    order_id: Date.now(),
+    status: 'new',
+    created_at: new Date().toISOString(),
+    restaurant_tables: { table_number: tableNum },
+    item_name,
+    quantity: 1,
+    ordered_by: 'Waiter',
+  }
+  mockOrders.push(newOrder)
+  return c.json({ data: newOrder, error: null })
+})
+
 app.get('/orders/kitchen', (c) => {
   const data = mockOrders.filter((order) =>
     ['open', 'new', 'preparing'].includes(order.status),

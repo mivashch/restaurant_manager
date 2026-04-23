@@ -82,6 +82,14 @@ export default function KitchenPage({
     }
   }
 
+  async function addMockOrder() {
+    const res = await fetch('/api/orders/mock', { method: 'POST' })
+    const json = await res.json().catch(() => null)
+    if (json?.data) {
+      setOrders((prev) => [...prev, json.data])
+    }
+  }
+
   async function handleReady(orderId: number) {
     try {
       const res = await fetch(`/api/orders/${orderId}/ready`, {
@@ -107,9 +115,17 @@ export default function KitchenPage({
           Restaurant Table Management
         </span>
 
-        <span className="text-sm font-medium text-neutral-500">
-          Kitchen • {user.name}
-        </span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={addMockOrder}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200 transition"
+          >
+            + Mock order
+          </button>
+          <span className="text-sm font-medium text-neutral-500">
+            Kitchen • {user.name}
+          </span>
+        </div>
       </header>
 
       <main className="flex-1 px-6 py-5">

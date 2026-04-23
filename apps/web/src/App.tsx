@@ -5,7 +5,6 @@ import RunnerPage from './components/RunnerPage'
 import WaiterPage from './components/WaiterPage'
 import KitchenPage from './components/KitchenPage'
 
-
 const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
   waiter: 'Waiter',
@@ -24,8 +23,8 @@ function AdminPage({ onBack }: { onBack: () => void }) {
 
   useEffect(() => {
     fetch('/api/floor-plan')
-      .then(r => r.json())
-      .then(json => {
+      .then((r) => r.json())
+      .then((json) => {
         if (json.data) {
           setPlanId(json.data.id)
           setPlan(json.data.data as Plan)
@@ -38,7 +37,11 @@ function AdminPage({ onBack }: { onBack: () => void }) {
     const res = await fetch('/api/floor-plan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: data.id, rooms: data.rooms, tables: data.tables }),
+      body: JSON.stringify({
+        id: data.id,
+        rooms: data.rooms,
+        tables: data.tables,
+      }),
     })
     const json = await res.json()
     if (json.data?.id) setPlanId(json.data.id)
@@ -58,7 +61,9 @@ function AdminPage({ onBack }: { onBack: () => void }) {
         </button>
       </header>
       <main className="flex-1 flex flex-col px-6 py-6">
-        <h1 className="text-xl font-semibold text-neutral-800 mb-4">Floor plan</h1>
+        <h1 className="text-xl font-semibold text-neutral-800 mb-4">
+          Floor plan
+        </h1>
         {loading ? (
           <p className="text-sm text-neutral-400 animate-pulse">Loading…</p>
         ) : (
@@ -101,21 +106,29 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
   return (
     <main className="flex-1 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <h1 className="text-2xl font-semibold text-neutral-800 mb-8">Sign in</h1>
+        <h1 className="text-2xl font-semibold text-neutral-800 mb-8">
+          Sign in
+        </h1>
         <form action={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="privateId" className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-2">
+            <label
+              htmlFor="privateId"
+              className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-2"
+            >
               Private ID
             </label>
             <input
-              id="privateId" name="privateId" type="text"
+              id="privateId"
+              name="privateId"
+              type="text"
               placeholder="Enter your private ID"
               className="w-full px-4 py-3 rounded-xl border border-neutral-200 bg-white text-neutral-800 placeholder-neutral-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-800 focus:border-transparent transition"
             />
           </div>
           {error && <p className="text-sm text-red-500">{error}</p>}
           <button
-            type="submit" disabled={loading}
+            type="submit"
+            disabled={loading}
             className="w-full py-3 rounded-xl bg-neutral-800 text-white text-sm font-medium hover:bg-neutral-700 active:bg-neutral-900 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Signing in…' : 'Continue'}
@@ -128,16 +141,24 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
 
 // ── Role selection ────────────────────────────────────────────────────────────
 
-function RoleScreen({ user, onSelect }: { user: User; onSelect: (role: Role) => void }) {
+function RoleScreen({
+  user,
+  onSelect,
+}: {
+  user: User
+  onSelect: (role: Role) => void
+}) {
   return (
     <main className="flex-1 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <p className="text-xs font-medium uppercase tracking-wider text-neutral-400 mb-1">
           Welcome, {user.name}
         </p>
-        <h1 className="text-2xl font-semibold text-neutral-800 mb-8">Choose role</h1>
+        <h1 className="text-2xl font-semibold text-neutral-800 mb-8">
+          Choose role
+        </h1>
         <div className="grid grid-cols-2 gap-3">
-          {ALL_ROLES.map(role => {
+          {ALL_ROLES.map((role) => {
             const active = user.roles.includes(role)
             return (
               <button
@@ -164,13 +185,16 @@ function RoleScreen({ user, onSelect }: { user: User; onSelect: (role: Role) => 
 // ── Root ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [user, setUser] = useState<User | null>(null)
+  // const [user, setUser] = useState<User | null>(null)
+  const [user, setUser] = useState<any>({
+    name: 'Speedrunner',
+    roles: ['waiter', 'kitchen', 'runner'],
+  })
   const [activeRole, setActiveRole] = useState<Role | null>(null)
 
   if (activeRole === 'admin') {
     return <AdminPage onBack={() => setActiveRole(null)} />
   }
-
 
   if (activeRole === 'runner' && user) {
     return <RunnerPage user={user} onBack={() => setActiveRole(null)} />
@@ -191,7 +215,9 @@ export default function App() {
             <p className="text-neutral-400 text-sm mb-2 uppercase tracking-widest font-medium">
               {activeRole}
             </p>
-            <h1 className="text-2xl font-semibold text-neutral-800 mb-8">Dashboard</h1>
+            <h1 className="text-2xl font-semibold text-neutral-800 mb-8">
+              Dashboard
+            </h1>
             <button
               onClick={() => setActiveRole(null)}
               className="text-sm text-neutral-400 hover:text-neutral-600 transition underline underline-offset-4"
@@ -207,7 +233,11 @@ export default function App() {
   return (
     <div className="min-h-screen bg-neutral-50 flex flex-col">
       <Header />
-      {user ? <RoleScreen user={user} onSelect={setActiveRole} /> : <LoginScreen onLogin={setUser} />}
+      {user ? (
+        <RoleScreen user={user} onSelect={setActiveRole} />
+      ) : (
+        <LoginScreen onLogin={setUser} />
+      )}
     </div>
   )
 }

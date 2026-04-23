@@ -24,7 +24,7 @@ const STATUS_COLOR: Record<Status, string> = {
 function RoomPolygon({ room }: { room: Room }) {
   return (
     <polygon
-      points={room.vertices.map(p => `${p.x},${p.y}`).join(' ')}
+      points={room.vertices.map((p) => `${p.x},${p.y}`).join(' ')}
       fill={room.obstacle ? '#e5e7eb' : '#f0fdf4'}
       stroke={room.obstacle ? '#9ca3af' : '#86efac'}
       strokeWidth={2}
@@ -43,13 +43,17 @@ export default function WaiterPage({ onBack }: Props) {
   const [error, setError] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
 
+  const [orderModalOpen, setOrderModalOpen] = useState(false)
+  const [selectedTable, setSelectedTable] = useState<number | null>(null)
+  const [orderItems, setOrderItems] = useState('')
+
   useEffect(() => {
     fetch('/api/floor-plan')
-      .then(r => {
+      .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
       })
-      .then(json => {
+      .then((json) => {
         if (json.data) setPlan(json.data.data as Plan)
       })
       .catch(() => setError('Failed to load floor plan'))
@@ -63,7 +67,9 @@ export default function WaiterPage({ onBack }: Props) {
       .then(({ data }) => {
         if (!data) return
         const map: TableStatuses = {}
-        data.forEach(t => { map[t.table_number] = t.status as Status })
+        data.forEach((t) => {
+          map[t.table_number] = t.status as Status
+        })
         setStatuses(map)
       })
   }, [])
@@ -74,11 +80,11 @@ export default function WaiterPage({ onBack }: Props) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'restaurant_tables' },
-        payload => {
+        (payload) => {
           if (payload.eventType === 'DELETE') {
             const old = payload.old as { table_number: number }
             if (old?.table_number != null) {
-              setStatuses(prev => {
+              setStatuses((prev) => {
                 const next = { ...prev }
                 delete next[old.table_number]
                 return next
@@ -87,30 +93,60 @@ export default function WaiterPage({ onBack }: Props) {
           } else {
             const row = payload.new as { table_number: number; status: Status }
             if (row?.table_number != null) {
-              setStatuses(prev => ({ ...prev, [row.table_number]: row.status }))
+              setStatuses((prev) => ({
+                ...prev,
+                [row.table_number]: row.status,
+              }))
             }
           }
-        }
+        },
       )
       .subscribe((status, err) => {
         if (err) console.error('Realtime subscription error:', err)
         else console.log('Realtime channel status:', status)
       })
 
-    return () => { supabase.removeChannel(channel) }
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   async function toggleTable(num: number) {
     const current = statuses[num] ?? 'available'
     const next = STATUS_CYCLE[current]
-    setStatuses(prev => ({ ...prev, [num]: next }))
+    setStatuses((prev) => ({ ...prev, [num]: next }))
     const res = await fetch(`/api/tables/${num}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: next }),
     })
     if (!res.ok) {
-      setStatuses(prev => ({ ...prev, [num]: current }))
+      setStatuses((prev) => ({ ...prev, [num]: current }))
+    }
+  }
+
+  function openOrderModal(num: number) {
+    setSelectedTable(num)
+    setOrderItems('')
+    setOrderModalOpen(true)
+  }
+
+  async function submitOrder(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selectedTable || !orderItems.trim()) return
+
+    const { error } = await supabase.from('orders').insert({
+      table_id: selectedTable,
+      waiter_id: 2,
+      items: orderItems,
+      status: 'new',
+    })
+
+    if (error) {
+      alert(`Failed to send order: ${error.message}`)
+    } else {
+      setOrderModalOpen(false)
+      setSelectedTable(null)
     }
   }
 
@@ -144,6 +180,9 @@ export default function WaiterPage({ onBack }: Props) {
               <span className="w-3 h-3 rounded-full bg-amber-400 inline-block" />
               Reserved
             </span>
+            <span className="flex items-center gap-1.5 font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded">
+              Double-click table to send order
+            </span>
           </div>
         </div>
 
@@ -152,7 +191,9 @@ export default function WaiterPage({ onBack }: Props) {
         ) : error ? (
           <p className="text-sm text-red-400">{error}</p>
         ) : !plan || plan.tables.length === 0 ? (
-          <p className="text-sm text-neutral-400">No floor plan configured yet.</p>
+          <p className="text-sm text-neutral-400">
+            No floor plan configured yet.
+          </p>
         ) : (
           <div className="rounded-xl overflow-hidden border border-neutral-200 bg-white">
             <svg
@@ -162,39 +203,58 @@ export default function WaiterPage({ onBack }: Props) {
               style={{ height: '70vh' }}
             >
               <defs>
-                <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                  <path d="M40 0L0 0 0 40" fill="none" stroke="#f3f4f6" strokeWidth="1" />
+                <pattern
+                  id="grid"
+                  width="40"
+                  height="40"
+                  patternUnits="userSpaceOnUse"
+                >
+                  <path
+                    d="M40 0L0 0 0 40"
+                    fill="none"
+                    stroke="#f3f4f6"
+                    strokeWidth="1"
+                  />
                 </pattern>
               </defs>
               <rect width={SVG_WIDTH} height={SVG_HEIGHT} fill="url(#grid)" />
 
-              {plan.rooms.map(room => (
+              {plan.rooms.map((room) => (
                 <RoomPolygon key={room.id} room={room} />
               ))}
 
-              {plan.tables.map(t => {
+              {plan.tables.map((t) => {
                 const status = statuses[t.num] ?? 'available'
                 return (
                   <g
                     key={t.id}
                     onClick={() => toggleTable(t.num)}
-                    className="cursor-pointer"
+                    onDoubleClick={() => openOrderModal(t.num)}
+                    className="cursor-pointer hover:opacity-80 transition-opacity"
                   >
                     <circle
-                      cx={t.x} cy={t.y} r={TABLE_RADIUS + 4}
+                      cx={t.x}
+                      cy={t.y}
+                      r={TABLE_RADIUS + 4}
                       fill="transparent"
                     />
                     <circle
-                      cx={t.x} cy={t.y} r={TABLE_RADIUS}
+                      cx={t.x}
+                      cy={t.y}
+                      r={TABLE_RADIUS}
                       fill={STATUS_COLOR[status]}
                       stroke="white"
                       strokeWidth={2}
                       className="transition-colors duration-300"
                     />
                     <text
-                      x={t.x} y={t.y}
-                      textAnchor="middle" dominantBaseline="central"
-                      fill="white" fontSize={13} fontWeight="bold"
+                      x={t.x}
+                      y={t.y}
+                      textAnchor="middle"
+                      dominantBaseline="central"
+                      fill="white"
+                      fontSize={13}
+                      fontWeight="bold"
                       style={{ pointerEvents: 'none' }}
                     >
                       {t.num}
@@ -206,6 +266,50 @@ export default function WaiterPage({ onBack }: Props) {
           </div>
         )}
       </main>
+
+      {}
+      {orderModalOpen && (
+        <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 border border-neutral-100">
+            <h2 className="text-xl font-semibold text-neutral-800 mb-1">
+              New Order
+            </h2>
+            <p className="text-sm text-neutral-500 mb-6">
+              Creating ticket for Table {selectedTable}
+            </p>
+
+            <form onSubmit={submitOrder}>
+              <label className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-2">
+                Order Items
+              </label>
+              <textarea
+                autoFocus
+                value={orderItems}
+                onChange={(e) => setOrderItems(e.target.value)}
+                placeholder="e.g. 2x Burger, 1x Cola"
+                className="w-full px-4 py-3 rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-800 placeholder-neutral-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-800 transition min-h-[120px] resize-none"
+              />
+
+              <div className="flex gap-3 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setOrderModalOpen(false)}
+                  className="flex-1 py-3 rounded-xl border border-neutral-200 text-neutral-600 text-sm font-medium hover:bg-neutral-50 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!orderItems.trim()}
+                  className="flex-1 py-3 rounded-xl bg-neutral-800 text-white text-sm font-medium hover:bg-neutral-700 disabled:opacity-50 transition"
+                >
+                  Send to Kitchen
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

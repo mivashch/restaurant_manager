@@ -165,6 +165,7 @@ function RoleScreen({ user, onSelect }: { user: User; onSelect: (role: Role) => 
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null)
+  // const [user, setUser] = useState<any>({ name: 'Speedrunner', roles: ['waiter', 'kitchen', 'runner'] })
   const [activeRole, setActiveRole] = useState<Role | null>(null)
 
   if (activeRole === 'admin') {

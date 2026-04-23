@@ -43,6 +43,11 @@ export default function WaiterPage({ onBack }: Props) {
   const [error, setError] = useState<string | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
 
+  // --- NEW STATE FOR OUR CUSTOM MODAL ---
+  const [orderModalOpen, setOrderModalOpen] = useState(false)
+  const [selectedTable, setSelectedTable] = useState<number | null>(null)
+  const [orderItems, setOrderItems] = useState('')
+
   useEffect(() => {
     fetch('/api/floor-plan')
       .then(r => {
@@ -94,7 +99,6 @@ export default function WaiterPage({ onBack }: Props) {
       )
       .subscribe((status, err) => {
         if (err) console.error('Realtime subscription error:', err)
-        else console.log('Realtime channel status:', status)
       })
 
     return () => { supabase.removeChannel(channel) }
@@ -114,8 +118,31 @@ export default function WaiterPage({ onBack }: Props) {
     }
   }
 
+
+  function openOrderModal(num: number) {
+    setSelectedTable(num)
+    setOrderItems('')
+    setOrderModalOpen(true)
+  }
+
+  async function submitOrder(e: React.FormEvent) {
+    e.preventDefault()
+    if (!selectedTable || !orderItems.trim()) return
+
+    const { error } = await supabase
+      .from('orders')
+      .insert({ table_number: selectedTable, items: orderItems, status: 'new' })
+
+    if (error) {
+      alert(`Failed to send order: ${error.message}`)
+    }
+    
+    setOrderModalOpen(false)
+    setSelectedTable(null)
+  }
+
   return (
-    <div className="min-h-screen bg-neutral-50 flex flex-col">
+    <div className="min-h-screen bg-neutral-50 flex flex-col relative">
       <header className="bg-white border-b border-neutral-200 px-6 py-4 flex items-center justify-between">
         <span className="text-sm font-medium tracking-widest uppercase text-neutral-400">
           Restaurant Table Management
@@ -143,6 +170,9 @@ export default function WaiterPage({ onBack }: Props) {
             <span className="flex items-center gap-1.5">
               <span className="w-3 h-3 rounded-full bg-amber-400 inline-block" />
               Reserved
+            </span>
+            <span className="flex items-center gap-1.5 font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded">
+              Double-click table to send order
             </span>
           </div>
         </div>
@@ -178,7 +208,8 @@ export default function WaiterPage({ onBack }: Props) {
                   <g
                     key={t.id}
                     onClick={() => toggleTable(t.num)}
-                    className="cursor-pointer"
+                    onDoubleClick={() => openOrderModal(t.num)}
+                    className="cursor-pointer hover:opacity-80 transition-opacity"
                   >
                     <circle
                       cx={t.x} cy={t.y} r={TABLE_RADIUS + 4}
@@ -206,6 +237,48 @@ export default function WaiterPage({ onBack }: Props) {
           </div>
         )}
       </main>
+
+      {}
+      {orderModalOpen && (
+        <div className="absolute inset-0 bg-neutral-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 border border-neutral-100">
+            <h2 className="text-xl font-semibold text-neutral-800 mb-1">
+              New Order
+            </h2>
+            <p className="text-sm text-neutral-500 mb-6">Creating ticket for Table {selectedTable}</p>
+            
+            <form onSubmit={submitOrder}>
+              <label className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-2">
+                Order Items
+              </label>
+              <textarea
+                autoFocus
+                value={orderItems}
+                onChange={e => setOrderItems(e.target.value)}
+                placeholder="e.g. 2x Burger, 1x Cola"
+                className="w-full px-4 py-3 rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-800 placeholder-neutral-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-800 transition min-h-[120px] resize-none"
+              />
+              
+              <div className="flex gap-3 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setOrderModalOpen(false)}
+                  className="flex-1 py-3 rounded-xl border border-neutral-200 text-neutral-600 text-sm font-medium hover:bg-neutral-50 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!orderItems.trim()}
+                  className="flex-1 py-3 rounded-xl bg-neutral-800 text-white text-sm font-medium hover:bg-neutral-700 disabled:opacity-50 transition"
+                >
+                  Send to Kitchen
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

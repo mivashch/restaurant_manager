@@ -6,7 +6,7 @@ type KitchenOrder = {
   id: string
   table_number: number
   items: string
-  status: 'new' | 'preparing' | 'ready'
+  status: 'open' | 'new' | 'preparing' | 'ready' | 'served'
   created_at: string
 }
 

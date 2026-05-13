@@ -74,40 +74,33 @@ merge to prod ->  GitHub Actions (lint + typecheck + build + migrate prod DB)
 
 ## Database migrations
 
-### How automatic migrations work
+### Automatic migrations
 
 Migrations live in `supabase/migrations/` and are applied automatically by GitHub Actions on every push:
 
-- push to `dev` → migrations run against the **dev** Supabase project
-- push/merge to `prod` → migrations run against the **prod** Supabase project
+- push to `dev` -> migrations run against the **dev** Supabase project
+- push/merge to `prod` -> migrations run against the **prod** Supabase project
 
-The `migrate` job in `.github/workflows/ci.yml` runs **after** CI passes (lint + typecheck + build). If CI fails, migrations are skipped.
-
-Required GitHub Actions secrets:
-| Secret | Description |
-|---|---|
-| `SUPABASE_ACCESS_TOKEN` | Personal access token from supabase.com/dashboard/account/tokens |
-| `SUPABASE_PROJECT_REF_DEV` | Project ref of the dev Supabase project |
-| `SUPABASE_PROJECT_REF_PROD` | Project ref of the prod Supabase project |
+The migrate job in `.github/workflows/ci.yml` runs **after** CI passes (lint + typecheck + build). If CI fails, migrations are skipped.
 
 ### Creating a new migration
 
 ```bash
 supabase migration new <migration_name>
-# e.g.: supabase migration new add_reservations_table
+# example: supabase migration new add_reservations_table
 ```
 
 This creates a new file in `supabase/migrations/` with a timestamp prefix. Write your SQL in that file, then commit and push — the migration will be applied automatically.
 
 ### Applying migrations manually
 
-If you need to push migrations without waiting for CI (e.g. hotfix or initial setup):
+If you need to push migrations without waiting for CI for some reason:
 
 ```bash
-# Install Supabase CLI if not installed
-# https://supabase.com/docs/guides/cli
+# Install Supabase CLI
 
 supabase login
+# You should ask me (Matvii) to add you to the Supabase project in order to push migrations ;)
 
 # Apply to dev
 supabase link --project-ref bnecqktcxftrqjkvwfmp
@@ -118,13 +111,6 @@ supabase link --project-ref enbfcgxomwtxgamwjkrq
 supabase db push
 ```
 
-### Resetting local DB (development only)
-
-```bash
-supabase start      # start local Supabase (Docker required)
-supabase db reset   # drop and recreate local DB, apply all migrations + seed
-supabase stop       # stop local Supabase
-```
 
 ## Branching strategy
 

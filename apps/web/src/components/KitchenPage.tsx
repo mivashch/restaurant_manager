@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabase'
 import type { User } from '@restaurant-manager/shared'
 
 type KitchenOrder = {
   order_id: number
-  status: 'open' | 'new' | 'preparing' | 'ready' | 'served'
+  table_id: number
+  waiter_id: number
+  items: string | null
+  status: 'new' | 'preparing' | 'ready' | 'served'
   created_at: string
-  restaurant_tables: {
-    table_number: number
-  } | null
-  item_name?: string
-  quantity?: number
-  ordered_by?: string
 }
 
 function formatTime(value: string) {
@@ -31,82 +29,124 @@ export default function KitchenPage({
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    async function loadOrders(silent = false) {
+    async function loadOrders() {
       try {
-        const res = await fetch('/api/orders/kitchen')
-        const json = await res.json().catch(() => null)
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .in('status', ['new', 'preparing'])
+          .order('created_at', { ascending: true })
 
-        if (!res.ok || json?.error) {
-          if (!silent) setOrders([])
+        if (error) {
+          console.error('Error loading orders:', error)
           return
         }
 
-        setOrders(json?.data ?? [])
-      } catch {
-        if (!silent) setOrders([])
+        setOrders(data as KitchenOrder[])
+      } catch (err) {
+        console.error('Error loading orders:', err)
       } finally {
-        if (!silent) setLoading(false)
+        setLoading(false)
       }
     }
 
     loadOrders()
 
-    const interval = window.setInterval(() => {
-      loadOrders(true)
-    }, 3000)
+    // Subscribe to realtime changes
+    const channel = supabase
+      .channel('kitchen-orders')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'orders',
+        },
+        (payload) => {
+          const order = payload.new as KitchenOrder | null
+          const oldOrder = payload.old as KitchenOrder | null
 
-    return () => window.clearInterval(interval)
+          if (payload.eventType === 'INSERT') {
+            if (order && (order.status === 'new' || order.status === 'preparing')) {
+              setOrders((prev) => {
+                const exists = prev.find((o) => o.order_id === order.order_id)
+                if (exists) return prev
+                return [...prev, order].sort(
+                  (a, b) =>
+                    new Date(a.created_at).getTime() -
+                    new Date(b.created_at).getTime()
+                )
+              })
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            if (order) {
+              if (order.status === 'new' || order.status === 'preparing') {
+                setOrders((prev) => {
+                  const exists = prev.find((o) => o.order_id === order.order_id)
+                  if (exists) {
+                    return prev.map((o) =>
+                      o.order_id === order.order_id ? order : o
+                    )
+                  }
+                  return [...prev, order].sort(
+                    (a, b) =>
+                      new Date(a.created_at).getTime() -
+                      new Date(b.created_at).getTime()
+                  )
+                })
+              } else {
+                // Remove from kitchen view if status is ready or served
+                setOrders((prev) =>
+                  prev.filter((o) => o.order_id !== order.order_id)
+                )
+              }
+            }
+          } else if (payload.eventType === 'DELETE') {
+            if (oldOrder) {
+              setOrders((prev) =>
+                prev.filter((o) => o.order_id !== oldOrder.order_id)
+              )
+            }
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   async function handleStart(orderId: number) {
     try {
-      const res = await fetch(`/api/orders/${orderId}/start`, {
-        method: 'PATCH',
-      })
+      const { error } = await supabase
+        .from('orders')
+        .update({ status: 'preparing' })
+        .eq('order_id', orderId)
 
-      const json = await res.json().catch(() => null)
-
-      if (!res.ok || json?.error) {
-        return
+      if (error) {
+        console.error('Error updating order:', error)
       }
-
-      setOrders(prev =>
-        prev.map(order =>
-          order.order_id === orderId
-            ? { ...order, status: 'preparing' }
-            : order,
-        ),
-      )
-    } catch {
-      //
-    }
-  }
-
-  async function addMockOrder() {
-    const res = await fetch('/api/orders/mock', { method: 'POST' })
-    const json = await res.json().catch(() => null)
-    if (json?.data) {
-      setOrders((prev) => [...prev, json.data])
+    } catch (err) {
+      console.error('Error updating order:', err)
     }
   }
 
   async function handleReady(orderId: number) {
     try {
-      const res = await fetch(`/api/orders/${orderId}/ready`, {
-        method: 'PATCH',
-      })
+      const { error } = await supabase
+        .from('orders')
+        .update({ status: 'ready' })
+        .eq('order_id', orderId)
 
-      const json = await res.json().catch(() => null)
-
-      if (!res.ok || json?.error) {
-        return
+      if (error) {
+        console.error('Error updating order:', error)
       }
-
-      setOrders(prev => prev.filter(order => order.order_id !== orderId))
-    } catch {
-      //
+    } catch (err) {
+      console.error('Error updating order:', err)
     }
   }
+
 
   return (
     <div className="min-h-screen bg-neutral-100 flex flex-col">
@@ -114,18 +154,9 @@ export default function KitchenPage({
         <span className="text-sm font-medium tracking-widest uppercase text-neutral-400">
           Restaurant Table Management
         </span>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={addMockOrder}
-            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 border border-amber-200 transition"
-          >
-            + Mock order
-          </button>
-          <span className="text-sm font-medium text-neutral-500">
-            Kitchen • {user.name}
-          </span>
-        </div>
+        <span className="text-sm font-medium text-neutral-500">
+          Kitchen • {user.name}
+        </span>
       </header>
 
       <main className="flex-1 px-6 py-5">
@@ -142,49 +173,49 @@ export default function KitchenPage({
           <p className="text-sm text-neutral-400">No orders in kitchen queue.</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {orders.map(order => {
+            {orders.map((order) => {
               const isPreparing = order.status === 'preparing'
 
               return (
                 <div
                   key={order.order_id}
                   className={[
-                    'bg-white rounded-2xl shadow-sm p-4 w-full border-2',
-                    isPreparing ? 'border-emerald-300' : 'border-rose-300',
+                    'bg-white rounded-2xl shadow-sm p-4 w-full border-2 transition-colors',
+                    isPreparing ? 'border-emerald-300 bg-emerald-50' : 'border-rose-300 bg-rose-50',
                   ].join(' ')}
                 >
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start justify-between gap-4 mb-3">
                     <div>
-                      <p className="text-xl font-semibold text-neutral-900 leading-none">
-                        {order.item_name ?? 'Order'}
+                      <p className="text-xs font-semibold uppercase text-neutral-500 tracking-wider">
+                        Order #{order.order_id}
                       </p>
-
-                      <p className="mt-2 text-sm text-neutral-600 leading-none">
-                        Table {order.restaurant_tables?.table_number ?? '—'} • Quantity:{' '}
-                        {order.quantity ?? 1}
+                      <p className="text-2xl font-bold text-neutral-900 mt-1">
+                        Table {order.table_id}
                       </p>
                     </div>
-
-                    <p className="text-sm text-slate-400 whitespace-nowrap">
+                    <p className="text-sm text-slate-500 whitespace-nowrap">
                       {formatTime(order.created_at)}
                     </p>
                   </div>
 
-                  <p className="mt-4 text-sm text-slate-400">
-                    Ordered by {order.ordered_by ?? 'Waiter'}
-                  </p>
+                  {order.items && (
+                    <div className="mb-4 p-3 bg-white rounded-lg border border-neutral-200">
+                      <p className="text-sm font-medium text-neutral-700">Items:</p>
+                      <p className="text-sm text-neutral-600 mt-1">{order.items}</p>
+                    </div>
+                  )}
 
                   {isPreparing ? (
                     <button
                       onClick={() => handleReady(order.order_id)}
-                      className="mt-5 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-semibold transition"
+                      className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors"
                     >
                       Mark as Ready
                     </button>
                   ) : (
                     <button
                       onClick={() => handleStart(order.order_id)}
-                      className="mt-5 w-full h-11 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold transition"
+                      className="mt-4 w-full h-11 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-sm font-semibold transition-colors"
                     >
                       Start Preparing
                     </button>

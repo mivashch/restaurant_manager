@@ -9,16 +9,10 @@ const SVG_WIDTH = 1000
 const SVG_HEIGHT = 650
 const TABLE_RADIUS = 18
 
-const STATUS_CYCLE: Record<Status, Status> = {
-  available: 'occupied',
-  occupied: 'reserved',
-  reserved: 'available',
-}
-
 const STATUS_COLOR: Record<Status, string> = {
-  available: '#22c55e',
-  occupied: '#ef4444',
-  reserved: '#f59e0b',
+  available: '#22c55e', // Emerald
+  occupied: '#ef4444',  // Red
+  reserved: '#f59e0b',  // Amber
 }
 
 function RoomPolygon({ room }: { room: Room }) {
@@ -41,6 +35,13 @@ export default function WaiterPage({ onBack }: Props) {
   const [statuses, setStatuses] = useState<TableStatuses>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  
+  
+  const [actionModalTable, setActionModalTable] = useState<number | null>(null)
+  const [orderModalTable, setOrderModalTable] = useState<number | null>(null)
+  const [orderItems, setOrderItems] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
   const svgRef = useRef<SVGSVGElement>(null)
 
   useEffect(() => {
@@ -92,30 +93,89 @@ export default function WaiterPage({ onBack }: Props) {
           }
         }
       )
-      .subscribe((status, err) => {
-        if (err) console.error('Realtime subscription error:', err)
-        else console.log('Realtime channel status:', status)
-      })
+      .subscribe()
 
     return () => { supabase.removeChannel(channel) }
   }, [])
 
-  async function toggleTable(num: number) {
+  // Action Menu Functions
+  function handleTableClick(num: number) {
+    setActionModalTable(num)
+  }
+
+  async function updateTableStatus(num: number, nextStatus: Status) {
     const current = statuses[num] ?? 'available'
-    const next = STATUS_CYCLE[current]
-    setStatuses(prev => ({ ...prev, [num]: next }))
+    setStatuses(prev => ({ ...prev, [num]: nextStatus }))
+    setActionModalTable(null) // Close action menu
+
     const res = await fetch(`/api/tables/${num}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: next }),
+      body: JSON.stringify({ status: nextStatus }),
     })
+
     if (!res.ok) {
-      setStatuses(prev => ({ ...prev, [num]: current }))
+      setStatuses(prev => ({ ...prev, [num]: current })) // Revert on failure
+      alert('Failed to update table status.')
     }
   }
 
+  function handleOpenOrderModal() {
+    if (actionModalTable) {
+      setOrderModalTable(actionModalTable)
+      setActionModalTable(null)
+    }
+  }
+
+ // Order Submit Function
+  async function submitOrder(e: React.FormEvent) {
+    e.preventDefault()
+    if (!orderModalTable || !orderItems.trim()) return
+
+    setSubmitting(true)
+    try {
+      // 1. Look up the real internal table_id using the visual table_number
+      const { data: tableData, error: tableError } = await supabase
+        .from('restaurant_tables')
+        .select('table_id')
+        .eq('table_number', orderModalTable)
+        .single()
+
+      if (tableError || !tableData) {
+        alert('Error: Table not registered in the database.')
+        setSubmitting(false)
+        return
+      }
+
+      // 2. Submit the order using the real table_id
+      const { error } = await supabase
+        .from('orders')
+        .insert({
+          table_id: tableData.table_id, // <-- We use the hidden ID here!
+          waiter_id: 2, // Hardcoded for demo
+          items: orderItems,
+          status: 'new',
+        })
+
+      if (error) throw error
+
+      // Automatically mark the table as occupied when an order is sent
+      await updateTableStatus(orderModalTable, 'occupied')
+
+      // Reset and close
+      setOrderItems('')
+      setOrderModalTable(null)
+    } catch (err) {
+      console.error('Error submitting order:', err)
+      alert('Failed to submit order. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+
   return (
-    <div className="min-h-screen bg-neutral-50 flex flex-col">
+    <div className="min-h-screen bg-neutral-50 flex flex-col relative">
       <header className="bg-white border-b border-neutral-200 px-6 py-4 flex items-center justify-between">
         <span className="text-sm font-medium tracking-widest uppercase text-neutral-400">
           Restaurant Table Management
@@ -177,26 +237,12 @@ export default function WaiterPage({ onBack }: Props) {
                 return (
                   <g
                     key={t.id}
-                    onClick={() => toggleTable(t.num)}
-                    className="cursor-pointer"
+                    onClick={() => handleTableClick(t.num)}
+                    className="cursor-pointer hover:opacity-80 transition-opacity"
                   >
-                    <circle
-                      cx={t.x} cy={t.y} r={TABLE_RADIUS + 4}
-                      fill="transparent"
-                    />
-                    <circle
-                      cx={t.x} cy={t.y} r={TABLE_RADIUS}
-                      fill={STATUS_COLOR[status]}
-                      stroke="white"
-                      strokeWidth={2}
-                      className="transition-colors duration-300"
-                    />
-                    <text
-                      x={t.x} y={t.y}
-                      textAnchor="middle" dominantBaseline="central"
-                      fill="white" fontSize={13} fontWeight="bold"
-                      style={{ pointerEvents: 'none' }}
-                    >
+                    <circle cx={t.x} cy={t.y} r={TABLE_RADIUS + 4} fill="transparent" />
+                    <circle cx={t.x} cy={t.y} r={TABLE_RADIUS} fill={STATUS_COLOR[status]} stroke="white" strokeWidth={2} className="transition-colors duration-300" />
+                    <text x={t.x} y={t.y} textAnchor="middle" dominantBaseline="central" fill="white" fontSize={13} fontWeight="bold" style={{ pointerEvents: 'none' }}>
                       {t.num}
                     </text>
                   </g>
@@ -206,6 +252,69 @@ export default function WaiterPage({ onBack }: Props) {
           </div>
         )}
       </main>
+
+      {/* ACTION MODAL */}
+      {actionModalTable !== null && (
+        <div className="fixed inset-0 bg-neutral-900/40 backdrop-blur-sm z-40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 border border-neutral-100">
+            <h2 className="text-xl font-semibold text-neutral-800 mb-1">Table {actionModalTable}</h2>
+            <p className="text-sm text-neutral-500 mb-6">Select an action</p>
+            
+            <div className="flex flex-col gap-3">
+              <button onClick={() => updateTableStatus(actionModalTable, 'available')} className="w-full py-3 rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm font-semibold hover:bg-emerald-100 transition">
+                Mark as Available
+              </button>
+              <button onClick={() => updateTableStatus(actionModalTable, 'occupied')} className="w-full py-3 rounded-xl border border-rose-200 bg-rose-50 text-rose-700 text-sm font-semibold hover:bg-rose-100 transition">
+                Mark as Occupied
+              </button>
+              <button onClick={() => updateTableStatus(actionModalTable, 'reserved')} className="w-full py-3 rounded-xl border border-amber-200 bg-amber-50 text-amber-700 text-sm font-semibold hover:bg-amber-100 transition">
+                Mark as Reserved
+              </button>
+              
+              <hr className="my-2 border-neutral-100" />
+              
+              <button onClick={handleOpenOrderModal} className="w-full py-3 rounded-xl bg-neutral-800 text-white text-sm font-semibold hover:bg-neutral-700 transition">
+                Create Order
+              </button>
+              
+              <button onClick={() => setActionModalTable(null)} className="mt-2 w-full py-3 rounded-xl text-neutral-500 text-sm font-medium hover:bg-neutral-50 transition">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ORDER MODAL */}
+      {orderModalTable !== null && (
+        <div className="fixed inset-0 bg-neutral-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 border border-neutral-100">
+            <h2 className="text-xl font-semibold text-neutral-800 mb-1">New Order</h2>
+            <p className="text-sm text-neutral-500 mb-6">Creating ticket for Table {orderModalTable}</p>
+            
+            <form onSubmit={submitOrder}>
+              <label className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-2">Order Items</label>
+              <textarea
+                autoFocus
+                value={orderItems}
+                onChange={e => setOrderItems(e.target.value)}
+                placeholder="e.g. 2x Burger, 1x Cola"
+                disabled={submitting}
+                className="w-full px-4 py-3 rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-800 placeholder-neutral-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-800 transition min-h-[120px] resize-none disabled:opacity-50"
+              />
+              
+              <div className="flex gap-3 mt-6">
+                <button type="button" onClick={() => setOrderModalTable(null)} disabled={submitting} className="flex-1 py-3 rounded-xl border border-neutral-200 text-neutral-600 text-sm font-medium hover:bg-neutral-50 transition disabled:opacity-50">
+                  Cancel
+                </button>
+                <button type="submit" disabled={!orderItems.trim() || submitting} className="flex-1 py-3 rounded-xl bg-neutral-800 text-white text-sm font-medium hover:bg-neutral-700 disabled:opacity-50 transition">
+                  {submitting ? 'Sending…' : 'Send to Kitchen'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

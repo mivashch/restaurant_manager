@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { User } from '@restaurant-manager/shared'
 
+type CartItem = { id: number; name: string; price: number; quantity: number }
+
 type KitchenOrder = {
   order_id: number
   table_id: number
@@ -9,6 +11,12 @@ type KitchenOrder = {
   items: string | null
   status: 'new' | 'preparing' | 'ready' | 'served'
   created_at: string
+  restaurant_tables: { table_number: number } | null
+}
+
+function parseItems(raw: string | null): CartItem[] {
+  if (!raw) return []
+  try { return JSON.parse(raw) } catch { return [] }
 }
 
 function formatTime(value: string) {
@@ -33,7 +41,7 @@ export default function KitchenPage({
       try {
         const { data, error } = await supabase
           .from('orders')
-          .select('*')
+          .select('*, restaurant_tables(table_number)')
           .in('status', ['new', 'preparing'])
           .order('created_at', { ascending: true })
 
@@ -190,7 +198,7 @@ export default function KitchenPage({
                         Order #{order.order_id}
                       </p>
                       <p className="text-2xl font-bold text-neutral-900 mt-1">
-                        Table {order.table_id}
+                        Table {order.restaurant_tables?.table_number ?? order.table_id}
                       </p>
                     </div>
                     <p className="text-sm text-slate-500 whitespace-nowrap">
@@ -198,12 +206,26 @@ export default function KitchenPage({
                     </p>
                   </div>
 
-                  {order.items && (
-                    <div className="mb-4 p-3 bg-white rounded-lg border border-neutral-200">
-                      <p className="text-sm font-medium text-neutral-700">Items:</p>
-                      <p className="text-sm text-neutral-600 mt-1">{order.items}</p>
-                    </div>
-                  )}
+                  {order.items && (() => {
+                    const items = parseItems(order.items)
+                    if (!items.length) return null
+                    return (
+                      <div className="mb-4 p-3 bg-white rounded-lg border border-neutral-200">
+                        <ul className="space-y-1">
+                          {items.map((item, i) => (
+                            <li key={i} className="flex items-center justify-between text-sm">
+                              <span className="text-neutral-800">
+                                <span className="font-semibold">{item.quantity}×</span> {item.name}
+                              </span>
+                              <span className="text-neutral-400 ml-2 shrink-0">
+                                {(item.price * item.quantity).toFixed(2)}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )
+                  })()}
 
                   {isPreparing ? (
                     <button

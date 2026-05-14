@@ -27,6 +27,7 @@ export default function KitchenPage({
 }) {
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [loading, setLoading] = useState(true)
+  const [processingId, setProcessingId] = useState<number | null>(null)
 
   useEffect(() => {
     async function loadOrders() {
@@ -39,12 +40,14 @@ export default function KitchenPage({
 
         if (error) {
           console.error('Error loading orders:', error)
+          alert('Failed to load kitchen orders. Please refresh.')
           return
         }
 
         setOrders(data as KitchenOrder[])
       } catch (err) {
         console.error('Error loading orders:', err)
+        alert('Failed to load kitchen orders. Please refresh.')
       } finally {
         setLoading(false)
       }
@@ -52,7 +55,6 @@ export default function KitchenPage({
 
     loadOrders()
 
-    // Subscribe to realtime changes
     const channel = supabase
       .channel('kitchen-orders')
       .on(
@@ -118,6 +120,7 @@ export default function KitchenPage({
   }, [])
 
   async function handleStart(orderId: number) {
+    setProcessingId(orderId)
     try {
       const { error } = await supabase
         .from('orders')
@@ -126,13 +129,18 @@ export default function KitchenPage({
 
       if (error) {
         console.error('Error updating order:', error)
+        alert('Failed to update order. Please try again.') 
       }
     } catch (err) {
       console.error('Error updating order:', err)
+      alert('An unexpected error occurred. Please try again.')
+    } finally {
+      setProcessingId(null) 
     }
   }
 
   async function handleReady(orderId: number) {
+    setProcessingId(orderId)
     try {
       const { error } = await supabase
         .from('orders')
@@ -141,9 +149,13 @@ export default function KitchenPage({
 
       if (error) {
         console.error('Error updating order:', error)
+        alert('Failed to update order. Please try again.') 
       }
     } catch (err) {
       console.error('Error updating order:', err)
+      alert('An unexpected error occurred. Please try again.')
+    } finally {
+      setProcessingId(null)
     }
   }
 
@@ -208,16 +220,18 @@ export default function KitchenPage({
                   {isPreparing ? (
                     <button
                       onClick={() => handleReady(order.order_id)}
-                      className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors"
+                      disabled={processingId === order.order_id}
+                      className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Mark as Ready
+                      {processingId === order.order_id ? 'Marking...' : 'Mark as Ready'}
                     </button>
                   ) : (
                     <button
                       onClick={() => handleStart(order.order_id)}
-                      className="mt-4 w-full h-11 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-sm font-semibold transition-colors"
+                      disabled={processingId === order.order_id}
+                      className="mt-4 w-full h-11 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Start Preparing
+                      {processingId === order.order_id ? 'Starting...' : 'Start Preparing'}
                     </button>
                   )}
                 </div>

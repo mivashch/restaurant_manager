@@ -27,6 +27,7 @@ export default function RunnerPage({
 }) {
   const [orders, setOrders] = useState<RunnerOrder[]>([])
   const [loading, setLoading] = useState(true)
+  const [processingId, setProcessingId] = useState<number | null>(null)
 
   useEffect(() => {
     async function loadOrders() {
@@ -39,12 +40,14 @@ export default function RunnerPage({
 
         if (error) {
           console.error('Error loading orders:', error)
+          alert('Failed to load runner orders. Please refresh.')
           return
         }
 
         setOrders(data as RunnerOrder[])
       } catch (err) {
         console.error('Error loading orders:', err)
+        alert('Failed to load runner orders. Please refresh.')
       } finally {
         setLoading(false)
       }
@@ -119,6 +122,7 @@ export default function RunnerPage({
   }, [])
 
   async function handleDelivered(orderId: number) {
+    setProcessingId(orderId)
     try {
       const { error } = await supabase
         .from('orders')
@@ -127,9 +131,13 @@ export default function RunnerPage({
 
       if (error) {
         console.error('Error updating order:', error)
+        alert('Failed to update order. Please try again.')
       }
     } catch (err) {
       console.error('Error updating order:', err)
+      alert('An unexpected error occurred. Please try again.')
+    } finally {
+      setProcessingId(null)
     }
   }
 
@@ -187,7 +195,8 @@ export default function RunnerPage({
 
                 <button
                   onClick={() => handleDelivered(order.order_id)}
-                  className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+                  disabled={processingId === order.order_id}
+                  className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <svg
                     width="18"
@@ -206,7 +215,7 @@ export default function RunnerPage({
                       strokeLinejoin="round"
                     />
                   </svg>
-                  Mark as Delivered
+                  {processingId === order.order_id ? 'Delivering...' : 'Mark as Delivered'}
                 </button>
               </div>
             ))}

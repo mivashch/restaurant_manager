@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { usePersistedState } from '../lib/usePersistedState'
 import { supabase } from '../lib/supabase'
 import type { Plan, Room } from './FloorPlanEditor'
 import type { MenuItem } from './MenuEditor'
@@ -42,7 +43,7 @@ interface Props {
 
 export default function WaiterPage({ onBack }: Props) {
   const [floors, setFloors] = useState<FloorData[]>([])
-  const [activeFloor, setActiveFloor] = useState(1)
+  const [activeFloor, setActiveFloor] = usePersistedState('rm_waiter_floor', 1)
   const [statuses, setStatuses] = useState<TableStatuses>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -66,7 +67,8 @@ export default function WaiterPage({ onBack }: Props) {
       .then(json => {
         if (json.data?.length) {
           setFloors(json.data as FloorData[])
-          setActiveFloor(json.data[0].floor_number)
+          const valid = (json.data as FloorData[]).find(f => f.floor_number === activeFloor)
+          if (!valid) setActiveFloor(json.data[0].floor_number)
         }
       })
       .catch(() => setError('Failed to load floor plans'))

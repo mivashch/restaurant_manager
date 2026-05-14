@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { usePersistedState } from '../lib/usePersistedState'
 
 export type MenuItem = {
   id: number
@@ -198,7 +199,7 @@ export default function MenuEditor() {
   const [items, setItems] = useState<MenuItem[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<DraftItem | null>(null)
-  const [activeCategory, setActiveCategory] = useState('All')
+  const [activeCategory, setActiveCategory] = usePersistedState('rm_menu_category', 'All')
 
   useEffect(() => {
     fetch('/api/menu')

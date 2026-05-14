@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import type { User, Role } from '@restaurant-manager/shared'
 import FloorPlanEditor, { type Plan } from './components/FloorPlanEditor'
+import { usePersistedState } from './lib/usePersistedState'
 import MenuEditor from './components/MenuEditor'
 import UserManager from './components/UserManager'
 import RunnerPage from './components/RunnerPage'
@@ -29,9 +30,9 @@ type FloorData = {
 }
 
 function AdminPage({ onBack }: { onBack: () => void }) {
-  const [section, setSection] = useState<AdminSection>('floor')
+  const [section, setSection] = usePersistedState<AdminSection>('rm_admin_section', 'floor')
   const [floors, setFloors] = useState<FloorData[]>([])
-  const [activeFloor, setActiveFloor] = useState(1)
+  const [activeFloor, setActiveFloor] = usePersistedState('rm_admin_floor', 1)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -46,7 +47,8 @@ function AdminPage({ onBack }: { onBack: () => void }) {
             data: f.data as Plan,
           }))
           setFloors(loaded)
-          setActiveFloor(loaded[0].floor_number)
+          const valid = loaded.find(f => f.floor_number === activeFloor)
+          if (!valid) setActiveFloor(loaded[0].floor_number)
         } else {
           setFloors([{ floor_number: 1, name: 'Floor 1', data: { rooms: [], tables: [] } }])
           setActiveFloor(1)
@@ -258,13 +260,21 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
 
 // ── Role selection ────────────────────────────────────────────────────────────
 
-function RoleScreen({ user, onSelect }: { user: User; onSelect: (role: Role) => void }) {
+function RoleScreen({ user, onSelect, onLogout }: { user: User; onSelect: (role: Role) => void; onLogout: () => void }) {
   return (
     <main className="flex-1 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <p className="text-xs font-medium uppercase tracking-wider text-neutral-400 mb-1">
-          Welcome, {user.name}
-        </p>
+        <div className="flex items-baseline justify-between mb-1">
+          <p className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+            Welcome, {user.name}
+          </p>
+          <button
+            onClick={onLogout}
+            className="text-xs text-neutral-400 hover:text-neutral-600 transition underline underline-offset-4"
+          >
+            Sign out
+          </button>
+        </div>
         <h1 className="text-2xl font-semibold text-neutral-800 mb-8">Choose role</h1>
         <div className="grid grid-cols-2 gap-3">
           {ALL_ROLES.map(role => {
@@ -293,9 +303,36 @@ function RoleScreen({ user, onSelect }: { user: User; onSelect: (role: Role) => 
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 
+const USER_KEY = 'rm_user'
+const ROLE_KEY = 'rm_role'
+
 export default function App() {
-  const [user, setUser] = useState<User | null>(null)
-  const [activeRole, setActiveRole] = useState<Role | null>(null)
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const stored = localStorage.getItem(USER_KEY)
+      return stored ? (JSON.parse(stored) as User) : null
+    } catch { return null }
+  })
+  const [activeRole, setActiveRole] = useState<Role | null>(() => {
+    try { return (sessionStorage.getItem(ROLE_KEY) as Role) || null } catch { return null }
+  })
+
+  useEffect(() => {
+    if (activeRole) sessionStorage.setItem(ROLE_KEY, activeRole)
+    else sessionStorage.removeItem(ROLE_KEY)
+  }, [activeRole])
+
+  function handleLogin(u: User) {
+    localStorage.setItem(USER_KEY, JSON.stringify(u))
+    setUser(u)
+  }
+
+  function handleLogout() {
+    localStorage.removeItem(USER_KEY)
+    sessionStorage.removeItem(ROLE_KEY)
+    setUser(null)
+    setActiveRole(null)
+  }
 
   if (activeRole === 'admin') {
     return <AdminPage onBack={() => setActiveRole(null)} />
@@ -337,7 +374,10 @@ export default function App() {
   return (
     <div className="min-h-screen bg-neutral-50 flex flex-col">
       <Header />
-      {user ? <RoleScreen user={user} onSelect={setActiveRole} /> : <LoginScreen onLogin={setUser} />}
+      {user
+        ? <RoleScreen user={user} onSelect={setActiveRole} onLogout={handleLogout} />
+        : <LoginScreen onLogin={handleLogin} />
+      }
     </div>
   )
 }

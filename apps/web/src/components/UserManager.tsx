@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { usePersistedState } from '../lib/usePersistedState'
 
 type AppUser = { id: number; username: string; role: string }
 type DraftUser = { id?: number; username: string; role: string }
@@ -124,7 +125,7 @@ export default function UserManager() {
   const [users, setUsers] = useState<AppUser[]>([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState<DraftUser | null>(null)
-  const [activeRole, setActiveRole] = useState<string>('All')
+  const [activeRole, setActiveRole] = usePersistedState<string>('rm_user_filter', 'All')
 
   useEffect(() => {
     fetch('/api/users')

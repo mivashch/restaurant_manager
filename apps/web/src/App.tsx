@@ -4,7 +4,6 @@ import FloorPlanEditor, { type Plan } from './components/FloorPlanEditor'
 import { usePersistedState } from './lib/usePersistedState'
 import MenuEditor from './components/MenuEditor'
 import UserManager from './components/UserManager'
-import RunnerPage from './components/RunnerPage'
 import WaiterPage from './components/WaiterPage'
 import KitchenPage from './components/KitchenPage'
 
@@ -13,10 +12,9 @@ const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
   waiter: 'Waiter',
   kitchen: 'Kitchen',
-  runner: 'Runner',
 }
 
-const ALL_ROLES: Role[] = ['admin', 'waiter', 'kitchen', 'runner']
+const ALL_ROLES: Role[] = ['admin', 'waiter', 'kitchen']
 
 // ── Admin page ────────────────────────────────────────────────────────────────
 
@@ -339,9 +337,6 @@ export default function App() {
   }
 
 
-  if (activeRole === 'runner' && user) {
-    return <RunnerPage user={user} onBack={() => setActiveRole(null)} />
-  }
   if (activeRole === 'waiter') {
     return <WaiterPage onBack={() => setActiveRole(null)} />
   }

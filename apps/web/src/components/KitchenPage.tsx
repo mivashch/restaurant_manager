@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import type { User } from '@restaurant-manager/shared'
 
@@ -36,7 +36,21 @@ export default function KitchenPage({
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [loading, setLoading] = useState(true)
 
+  // table_id → table_number; stored in ref to avoid stale closures in realtime callbacks
+  const tableMapRef = useRef<Record<number, number>>({})
+
   useEffect(() => {
+    // Build tableMapRef from restaurant_tables
+    supabase
+      .from('restaurant_tables')
+      .select('table_id, table_number')
+      .then(({ data }) => {
+        if (!data) return
+        const map: Record<number, number> = {}
+        data.forEach(t => { map[t.table_id] = t.table_number })
+        tableMapRef.current = map
+      })
+
     async function loadOrders() {
       try {
         const { data, error } = await supabase
@@ -60,7 +74,6 @@ export default function KitchenPage({
 
     loadOrders()
 
-    // Subscribe to realtime changes
     const channel = supabase
       .channel('kitchen-orders')
       .on(
@@ -71,49 +84,55 @@ export default function KitchenPage({
           table: 'orders',
         },
         (payload) => {
-          const order = payload.new as KitchenOrder | null
-          const oldOrder = payload.old as KitchenOrder | null
+          const order = payload.new as { order_id: number; table_id: number; items: string | null; created_at: string; status: string } | null
+          const oldOrder = payload.old as { order_id: number } | null
 
           if (payload.eventType === 'INSERT') {
             if (order && (order.status === 'new' || order.status === 'preparing')) {
+              const tableNum = tableMapRef.current[order.table_id] ?? null
+              const enriched: KitchenOrder = {
+                order_id: order.order_id,
+                table_id: order.table_id,
+                waiter_id: 0,
+                items: order.items,
+                status: order.status as KitchenOrder['status'],
+                created_at: order.created_at,
+                restaurant_tables: tableNum != null ? { table_number: tableNum } : null,
+              }
               setOrders((prev) => {
-                const exists = prev.find((o) => o.order_id === order.order_id)
-                if (exists) return prev
-                return [...prev, order].sort(
-                  (a, b) =>
-                    new Date(a.created_at).getTime() -
-                    new Date(b.created_at).getTime()
+                if (prev.find((o) => o.order_id === enriched.order_id)) return prev
+                return [...prev, enriched].sort(
+                  (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
                 )
               })
             }
           } else if (payload.eventType === 'UPDATE') {
             if (order) {
               if (order.status === 'new' || order.status === 'preparing') {
+                const tableNum = tableMapRef.current[order.table_id] ?? null
+                const enriched: KitchenOrder = {
+                  order_id: order.order_id,
+                  table_id: order.table_id,
+                  waiter_id: 0,
+                  items: order.items,
+                  status: order.status as KitchenOrder['status'],
+                  created_at: order.created_at,
+                  restaurant_tables: tableNum != null ? { table_number: tableNum } : null,
+                }
                 setOrders((prev) => {
-                  const exists = prev.find((o) => o.order_id === order.order_id)
-                  if (exists) {
-                    return prev.map((o) =>
-                      o.order_id === order.order_id ? order : o
-                    )
-                  }
-                  return [...prev, order].sort(
-                    (a, b) =>
-                      new Date(a.created_at).getTime() -
-                      new Date(b.created_at).getTime()
+                  const exists = prev.find((o) => o.order_id === enriched.order_id)
+                  if (exists) return prev.map((o) => o.order_id === enriched.order_id ? enriched : o)
+                  return [...prev, enriched].sort(
+                    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
                   )
                 })
               } else {
-                // Remove from kitchen view if status is ready or served
-                setOrders((prev) =>
-                  prev.filter((o) => o.order_id !== order.order_id)
-                )
+                setOrders((prev) => prev.filter((o) => o.order_id !== order.order_id))
               }
             }
           } else if (payload.eventType === 'DELETE') {
             if (oldOrder) {
-              setOrders((prev) =>
-                prev.filter((o) => o.order_id !== oldOrder.order_id)
-              )
+              setOrders((prev) => prev.filter((o) => o.order_id !== oldOrder.order_id))
             }
           }
         }
@@ -132,9 +151,7 @@ export default function KitchenPage({
         .update({ status: 'preparing' })
         .eq('order_id', orderId)
 
-      if (error) {
-        console.error('Error updating order:', error)
-      }
+      if (error) console.error('Error updating order:', error)
     } catch (err) {
       console.error('Error updating order:', err)
     }
@@ -147,14 +164,11 @@ export default function KitchenPage({
         .update({ status: 'ready' })
         .eq('order_id', orderId)
 
-      if (error) {
-        console.error('Error updating order:', error)
-      }
+      if (error) console.error('Error updating order:', error)
     } catch (err) {
       console.error('Error updating order:', err)
     }
   }
-
 
   return (
     <div className="min-h-screen bg-neutral-100 flex flex-col">
@@ -188,7 +202,7 @@ export default function KitchenPage({
                 <div
                   key={order.order_id}
                   className={[
-                    'bg-white rounded-2xl shadow-sm p-4 w-full border-2 transition-colors',
+                    'rounded-2xl shadow-sm p-4 w-full border-2 transition-colors',
                     isPreparing ? 'border-emerald-300 bg-emerald-50' : 'border-rose-300 bg-rose-50',
                   ].join(' ')}
                 >
@@ -198,7 +212,7 @@ export default function KitchenPage({
                         Order #{order.order_id}
                       </p>
                       <p className="text-2xl font-bold text-neutral-900 mt-1">
-                        Table {order.restaurant_tables?.table_number ?? order.table_id}
+                        Table {order.restaurant_tables?.table_number ?? tableMapRef.current[order.table_id] ?? order.table_id}
                       </p>
                     </div>
                     <p className="text-sm text-slate-500 whitespace-nowrap">

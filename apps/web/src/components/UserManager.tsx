@@ -4,21 +4,19 @@ import { usePersistedState } from '../lib/usePersistedState'
 type AppUser = { id: number; username: string; role: string }
 type DraftUser = { id?: number; username: string; role: string }
 
-const ROLES = ['admin', 'waiter', 'kitchen', 'runner'] as const
+const ROLES = ['admin', 'waiter', 'kitchen'] as const
 type Role = typeof ROLES[number]
 
 const ROLE_PREFIX: Record<Role, string> = {
   admin: 'ADMIN',
   waiter: 'WAITER',
   kitchen: 'KITCHEN',
-  runner: 'RUNNER',
 }
 
 const ROLE_COLORS: Record<Role, string> = {
   admin: 'bg-purple-100 text-purple-700',
   waiter: 'bg-blue-100 text-blue-700',
   kitchen: 'bg-orange-100 text-orange-700',
-  runner: 'bg-emerald-100 text-emerald-700',
 }
 
 function nextUsername(users: AppUser[], role: Role): string {

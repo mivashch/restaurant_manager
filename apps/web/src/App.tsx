@@ -5,7 +5,6 @@ import RunnerPage from './components/RunnerPage'
 import WaiterPage from './components/WaiterPage'
 import KitchenPage from './components/KitchenPage'
 
-
 const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
   waiter: 'Waiter',
@@ -90,6 +89,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
         setError(json.error ?? 'Login failed')
       } else {
         onLogin(json.data.user)
+        // onLogin({ ...json.data.user, roles: ['admin', 'waiter', 'kitchen', 'runner'] })
       }
     } catch {
       setError('Network error')
@@ -171,12 +171,12 @@ export default function App() {
     return <AdminPage onBack={() => setActiveRole(null)} />
   }
 
-
   if (activeRole === 'runner' && user) {
     return <RunnerPage user={user} onBack={() => setActiveRole(null)} />
   }
-  if (activeRole === 'waiter') {
-    return <WaiterPage onBack={() => setActiveRole(null)} />
+  
+  if (activeRole === 'waiter' && user) {
+    return <WaiterPage user={user} onBack={() => setActiveRole(null)} />
   }
   if (activeRole === 'kitchen' && user) {
     return <KitchenPage user={user} onBack={() => setActiveRole(null)} />

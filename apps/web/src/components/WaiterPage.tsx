@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Plan, Room } from './FloorPlanEditor'
+import type { User } from '@restaurant-manager/shared'
 
 type Status = 'available' | 'occupied' | 'reserved'
 type TableStatuses = Record<number, Status>
@@ -27,15 +28,15 @@ function RoomPolygon({ room }: { room: Room }) {
 }
 
 interface Props {
+  user: User
   onBack: () => void
 }
 
-export default function WaiterPage({ onBack }: Props) {
+export default function WaiterPage({ user, onBack }: Props) {
   const [plan, setPlan] = useState<Plan | null>(null)
   const [statuses, setStatuses] = useState<TableStatuses>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  
   
   const [actionModalTable, setActionModalTable] = useState<number | null>(null)
   const [orderModalTable, setOrderModalTable] = useState<number | null>(null)
@@ -98,7 +99,6 @@ export default function WaiterPage({ onBack }: Props) {
     return () => { supabase.removeChannel(channel) }
   }, [])
 
-  // Action Menu Functions
   function handleTableClick(num: number) {
     setActionModalTable(num)
   }
@@ -106,7 +106,7 @@ export default function WaiterPage({ onBack }: Props) {
   async function updateTableStatus(num: number, nextStatus: Status) {
     const current = statuses[num] ?? 'available'
     setStatuses(prev => ({ ...prev, [num]: nextStatus }))
-    setActionModalTable(null) // Close action menu
+    setActionModalTable(null) 
 
     const res = await fetch(`/api/tables/${num}/status`, {
       method: 'PATCH',
@@ -115,7 +115,7 @@ export default function WaiterPage({ onBack }: Props) {
     })
 
     if (!res.ok) {
-      setStatuses(prev => ({ ...prev, [num]: current })) // Revert on failure
+      setStatuses(prev => ({ ...prev, [num]: current })) 
       alert('Failed to update table status.')
     }
   }
@@ -127,14 +127,12 @@ export default function WaiterPage({ onBack }: Props) {
     }
   }
 
- // Order Submit Function
   async function submitOrder(e: React.FormEvent) {
     e.preventDefault()
     if (!orderModalTable || !orderItems.trim()) return
 
     setSubmitting(true)
     try {
-      // 1. Look up the real internal table_id using the visual table_number
       const { data: tableData, error: tableError } = await supabase
         .from('restaurant_tables')
         .select('table_id')
@@ -147,22 +145,19 @@ export default function WaiterPage({ onBack }: Props) {
         return
       }
 
-      // 2. Submit the order using the real table_id
       const { error } = await supabase
         .from('orders')
         .insert({
-          table_id: tableData.table_id, // <-- We use the hidden ID here!
-          waiter_id: 2, // Hardcoded for demo
+          table_id: tableData.table_id,
+          waiter_id: user.id, 
           items: orderItems,
           status: 'new',
         })
 
       if (error) throw error
 
-      // Automatically mark the table as occupied when an order is sent
       await updateTableStatus(orderModalTable, 'occupied')
 
-      // Reset and close
       setOrderItems('')
       setOrderModalTable(null)
     } catch (err) {

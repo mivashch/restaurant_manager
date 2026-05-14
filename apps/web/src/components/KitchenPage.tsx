@@ -5,7 +5,6 @@ import type { User } from '@restaurant-manager/shared'
 type KitchenOrder = {
   order_id: number
   table_id: number
-  waiter_id: number
   items: string | null
   status: 'new' | 'preparing' | 'ready' | 'served'
   created_at: string
@@ -26,10 +25,21 @@ export default function KitchenPage({
   onBack: () => void
 }) {
   const [orders, setOrders] = useState<KitchenOrder[]>([])
+  const [tableMap, setTableMap] = useState<Record<number, number>>({})
   const [loading, setLoading] = useState(true)
   const [processingId, setProcessingId] = useState<number | null>(null)
 
   useEffect(() => {
+
+    async function loadTableMap() {
+      const { data } = await supabase.from('restaurant_tables').select('table_id, table_number')
+      if (data) {
+        const map: Record<number, number> = {}
+        data.forEach(t => { map[t.table_id] = t.table_number })
+        setTableMap(map)
+      }
+    }
+    
     async function loadOrders() {
       try {
         const { data, error } = await supabase
@@ -53,78 +63,36 @@ export default function KitchenPage({
       }
     }
 
+    loadTableMap()
     loadOrders()
 
     const channel = supabase
       .channel('kitchen-orders')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'orders',
-        },
+        { event: '*', schema: 'public', table: 'orders' },
         (payload) => {
-          const order = payload.new as KitchenOrder | null
           const oldOrder = payload.old as KitchenOrder | null
-
-          if (payload.eventType === 'INSERT') {
-            if (order && (order.status === 'new' || order.status === 'preparing')) {
-              setOrders((prev) => {
-                const exists = prev.find((o) => o.order_id === order.order_id)
-                if (exists) return prev
-                return [...prev, order].sort(
-                  (a, b) =>
-                    new Date(a.created_at).getTime() -
-                    new Date(b.created_at).getTime()
-                )
-              })
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            if (order) {
-              if (order.status === 'new' || order.status === 'preparing') {
-                setOrders((prev) => {
-                  const exists = prev.find((o) => o.order_id === order.order_id)
-                  if (exists) {
-                    return prev.map((o) =>
-                      o.order_id === order.order_id ? order : o
-                    )
-                  }
-                  return [...prev, order].sort(
-                    (a, b) =>
-                      new Date(a.created_at).getTime() -
-                      new Date(b.created_at).getTime()
-                  )
-                })
-              } else {
-                // Remove from kitchen view if status is ready or served
-                setOrders((prev) =>
-                  prev.filter((o) => o.order_id !== order.order_id)
-                )
-              }
-            }
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+             loadOrders()
           } else if (payload.eventType === 'DELETE') {
             if (oldOrder) {
-              setOrders((prev) =>
-                prev.filter((o) => o.order_id !== oldOrder.order_id)
-              )
+              setOrders((prev) => prev.filter((o) => o.order_id !== oldOrder.order_id))
             }
           }
         }
       )
       .subscribe()
 
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    return () => { supabase.removeChannel(channel) }
   }, [])
 
-  async function handleStart(orderId: number) {
-    setProcessingId(orderId)
+  async function updateStatus(orderId: number, status: 'preparing' | 'ready') {
+    setProcessingId(orderId) 
     try {
       const { error } = await supabase
         .from('orders')
-        .update({ status: 'preparing' })
+        .update({ status })
         .eq('order_id', orderId)
 
       if (error) {
@@ -133,32 +101,11 @@ export default function KitchenPage({
       }
     } catch (err) {
       console.error('Error updating order:', err)
-      alert('An unexpected error occurred. Please try again.')
+      alert('An unexpected error occurred. Please try again.') 
     } finally {
       setProcessingId(null) 
     }
   }
-
-  async function handleReady(orderId: number) {
-    setProcessingId(orderId)
-    try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: 'ready' })
-        .eq('order_id', orderId)
-
-      if (error) {
-        console.error('Error updating order:', error)
-        alert('Failed to update order. Please try again.') 
-      }
-    } catch (err) {
-      console.error('Error updating order:', err)
-      alert('An unexpected error occurred. Please try again.')
-    } finally {
-      setProcessingId(null)
-    }
-  }
-
 
   return (
     <div className="min-h-screen bg-neutral-100 flex flex-col">
@@ -202,7 +149,7 @@ export default function KitchenPage({
                         Order #{order.order_id}
                       </p>
                       <p className="text-2xl font-bold text-neutral-900 mt-1">
-                        Table {order.table_id}
+                        Table {tableMap[order.table_id] ?? order.table_id}
                       </p>
                     </div>
                     <p className="text-sm text-slate-500 whitespace-nowrap">
@@ -219,7 +166,7 @@ export default function KitchenPage({
 
                   {isPreparing ? (
                     <button
-                      onClick={() => handleReady(order.order_id)}
+                      onClick={() => updateStatus(order.order_id, 'ready')}
                       disabled={processingId === order.order_id}
                       className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
@@ -227,7 +174,7 @@ export default function KitchenPage({
                     </button>
                   ) : (
                     <button
-                      onClick={() => handleStart(order.order_id)}
+                      onClick={() => updateStatus(order.order_id, 'preparing')}
                       disabled={processingId === order.order_id}
                       className="mt-4 w-full h-11 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >

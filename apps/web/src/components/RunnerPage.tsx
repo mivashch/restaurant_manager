@@ -5,10 +5,10 @@ import type { User } from '@restaurant-manager/shared'
 type RunnerOrder = {
   order_id: number
   table_id: number
-  waiter_id: number
   items: string | null
   status: 'new' | 'preparing' | 'ready' | 'served'
   created_at: string
+  restaurant_tables?: { table_number: number } | null
 }
 
 function formatReadyTime(value: string) {
@@ -34,7 +34,7 @@ export default function RunnerPage({
       try {
         const { data, error } = await supabase
           .from('orders')
-          .select('*')
+          .select('*, restaurant_tables(table_number)')
           .eq('status', 'ready')
           .order('created_at', { ascending: true })
 
@@ -55,7 +55,6 @@ export default function RunnerPage({
 
     loadOrders()
 
-    // Subscribe to realtime changes
     const channel = supabase
       .channel('runner-orders')
       .on(
@@ -66,45 +65,10 @@ export default function RunnerPage({
           table: 'orders',
         },
         (payload) => {
-          const order = payload.new as RunnerOrder | null
           const oldOrder = payload.old as RunnerOrder | null
 
-          if (payload.eventType === 'INSERT') {
-            if (order && order.status === 'ready') {
-              setOrders((prev) => {
-                const exists = prev.find((o) => o.order_id === order.order_id)
-                if (exists) return prev
-                return [...prev, order].sort(
-                  (a, b) =>
-                    new Date(a.created_at).getTime() -
-                    new Date(b.created_at).getTime()
-                )
-              })
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            if (order) {
-              if (order.status === 'ready') {
-                // Add to runner view if status changed to ready
-                setOrders((prev) => {
-                  const exists = prev.find((o) => o.order_id === order.order_id)
-                  if (exists) {
-                    return prev.map((o) =>
-                      o.order_id === order.order_id ? order : o
-                    )
-                  }
-                  return [...prev, order].sort(
-                    (a, b) =>
-                      new Date(a.created_at).getTime() -
-                      new Date(b.created_at).getTime()
-                  )
-                })
-              } else {
-                // Remove from runner view if status is not ready
-                setOrders((prev) =>
-                  prev.filter((o) => o.order_id !== order.order_id)
-                )
-              }
-            }
+          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+             loadOrders()
           } else if (payload.eventType === 'DELETE') {
             if (oldOrder) {
               setOrders((prev) =>
@@ -122,22 +86,25 @@ export default function RunnerPage({
   }, [])
 
   async function handleDelivered(orderId: number) {
-    setProcessingId(orderId)
+    setProcessingId(orderId) 
     try {
       const { error } = await supabase
         .from('orders')
-        .update({ status: 'served' })
+        .update({ 
+          status: 'served',
+          runner_id: user.id
+        })
         .eq('order_id', orderId)
 
       if (error) {
         console.error('Error updating order:', error)
-        alert('Failed to update order. Please try again.')
+        alert('Failed to update order. Please try again.') 
       }
     } catch (err) {
       console.error('Error updating order:', err)
-      alert('An unexpected error occurred. Please try again.')
+      alert('An unexpected error occurred. Please try again.') 
     } finally {
-      setProcessingId(null)
+      setProcessingId(null) 
     }
   }
 
@@ -178,7 +145,7 @@ export default function RunnerPage({
                       Order #{order.order_id}
                     </p>
                     <p className="text-2xl font-bold text-neutral-900 mt-1">
-                      Table {order.table_id}
+                      Table {order.restaurant_tables?.table_number ?? order.table_id}
                     </p>
                   </div>
                   <p className="text-sm text-slate-500 whitespace-nowrap">

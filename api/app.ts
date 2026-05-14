@@ -113,6 +113,17 @@ app.post('/floor-plan', async (c) => {
   const { id, floor_number = 1, name, rooms, tables } = body
   const now = new Date().toISOString()
 
+  // Read the floor's current table list BEFORE saving so we can diff it
+  let prevTableNums: number[] = []
+  if (id) {
+    const { data: prev } = await supabase
+      .from('floor_plans')
+      .select('data')
+      .eq('id', id)
+      .single()
+    prevTableNums = (prev?.data as { tables?: Array<{ num: number }> })?.tables?.map(t => t.num) ?? []
+  }
+
   let result: { data: unknown; error: { message: string } | null }
 
   if (id) {
@@ -135,26 +146,62 @@ app.post('/floor-plan', async (c) => {
   if (!result.error) {
     const tableNums = tables?.map((t) => t.num) ?? []
 
-    if (tableNums.length) {
-      // Remove tables from this floor no longer in the plan
-      await supabase
-        .from('restaurant_tables')
-        .delete()
-        .not('table_number', 'in', `(${tableNums.join(',')})`)
-        .in('table_number', (
-          await supabase
-            .from('restaurant_tables')
-            .select('table_number')
-        ).data?.map((r) => r.table_number).filter((n) => !tableNums.includes(n)) ?? [])
+    // Remove only tables that were on THIS floor before and are no longer in the new plan
+    const toDelete = prevTableNums.filter(n => !tableNums.includes(n))
+    if (toDelete.length) {
+      await supabase.from('restaurant_tables').delete().in('table_number', toDelete)
+    }
 
+    // Insert tables new to this floor — always force status: 'available' to clear any stale entries
+    const toInsert = tableNums.filter(n => !prevTableNums.includes(n))
+    if (toInsert.length) {
       await supabase.from('restaurant_tables').upsert(
-        tables.map((t) => ({ table_number: t.num, status: 'available' })),
-        { onConflict: 'table_number', ignoreDuplicates: true },
+        toInsert.map(num => ({ table_number: num, status: 'available' })),
+        { onConflict: 'table_number' },
       )
     }
   }
 
+  // Remove any restaurant_tables entries not referenced by any floor plan (cross-floor orphan cleanup)
+  if (!result.error) {
+    const { data: allFloors } = await supabase.from('floor_plans').select('data')
+    const validNums = new Set(
+      (allFloors ?? []).flatMap(f =>
+        ((f.data as { tables?: Array<{ num: number }> })?.tables ?? []).map(t => t.num)
+      )
+    )
+    if (validNums.size > 0) {
+      const nums = [...validNums]
+      await supabase
+        .from('restaurant_tables')
+        .delete()
+        .not('table_number', 'in', `(${nums.join(',')})`)
+    }
+  }
+
   return c.json({ data: result.data, error: result.error?.message ?? null })
+})
+
+// Remove restaurant_tables entries that are no longer referenced by any floor plan
+app.post('/tables/cleanup', async (c) => {
+  const { data: floors } = await supabase.from('floor_plans').select('data')
+  const validNums = new Set(
+    (floors ?? []).flatMap(f =>
+      ((f.data as { tables?: Array<{ num: number }> })?.tables ?? []).map(t => t.num)
+    )
+  )
+
+  if (validNums.size === 0) {
+    await supabase.from('restaurant_tables').delete().neq('table_number', 0)
+  } else {
+    const nums = [...validNums]
+    await supabase
+      .from('restaurant_tables')
+      .delete()
+      .not('table_number', 'in', `(${nums.join(',')})`)
+  }
+
+  return c.json({ data: null, error: null })
 })
 
 app.delete('/floor-plan/:id', async (c) => {
@@ -182,9 +229,26 @@ app.patch('/tables/:num/status', async (c) => {
   const num = Number(c.req.param('num'))
   const { status } = await c.req.json<{ status: string }>()
 
+  const update: Record<string, unknown> = { status }
+
+  if (status === 'available' || status === 'reserved') {
+    update.occupied_at = null
+  } else if (status === 'occupied') {
+    // Only set occupied_at when transitioning from a non-occupied state
+    const { data: current } = await supabase
+      .from('restaurant_tables')
+      .select('status')
+      .eq('table_number', num)
+      .single()
+
+    if (current?.status !== 'occupied') {
+      update.occupied_at = new Date().toISOString()
+    }
+  }
+
   const { data, error } = await supabase
     .from('restaurant_tables')
-    .upsert({ table_number: num, status }, { onConflict: 'table_number' })
+    .upsert({ table_number: num, ...update }, { onConflict: 'table_number' })
     .select()
     .single()
 

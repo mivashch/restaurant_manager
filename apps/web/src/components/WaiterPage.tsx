@@ -1,18 +1,28 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import type { Plan, Room } from './FloorPlanEditor'
+import type { MenuItem } from './MenuEditor'
 
 type Status = 'available' | 'occupied' | 'reserved'
 type TableStatuses = Record<number, Status>
+
+type CartItem = { id: number; name: string; price: number; quantity: number }
+
+type FloorData = {
+  id: number
+  floor_number: number
+  name: string
+  data: Plan
+}
 
 const SVG_WIDTH = 1000
 const SVG_HEIGHT = 650
 const TABLE_RADIUS = 18
 
 const STATUS_COLOR: Record<Status, string> = {
-  available: '#22c55e', // Emerald
-  occupied: '#ef4444',  // Red
-  reserved: '#f59e0b',  // Amber
+  available: '#22c55e',
+  occupied: '#ef4444',
+  reserved: '#f59e0b',
 }
 
 function RoomPolygon({ room }: { room: Room }) {
@@ -31,29 +41,35 @@ interface Props {
 }
 
 export default function WaiterPage({ onBack }: Props) {
-  const [plan, setPlan] = useState<Plan | null>(null)
+  const [floors, setFloors] = useState<FloorData[]>([])
+  const [activeFloor, setActiveFloor] = useState(1)
   const [statuses, setStatuses] = useState<TableStatuses>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  
-  
+
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([])
+  const [menuCategory, setMenuCategory] = useState('All')
+  const [menuSearch, setMenuSearch] = useState('')
+  const [cart, setCart] = useState<CartItem[]>([])
   const [actionModalTable, setActionModalTable] = useState<number | null>(null)
   const [orderModalTable, setOrderModalTable] = useState<number | null>(null)
-  const [orderItems, setOrderItems] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const svgRef = useRef<SVGSVGElement>(null)
 
   useEffect(() => {
-    fetch('/api/floor-plan')
+    fetch('/api/floor-plans')
       .then(r => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         return r.json()
       })
       .then(json => {
-        if (json.data) setPlan(json.data.data as Plan)
+        if (json.data?.length) {
+          setFloors(json.data as FloorData[])
+          setActiveFloor(json.data[0].floor_number)
+        }
       })
-      .catch(() => setError('Failed to load floor plan'))
+      .catch(() => setError('Failed to load floor plans'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -98,6 +114,56 @@ export default function WaiterPage({ onBack }: Props) {
     return () => { supabase.removeChannel(channel) }
   }, [])
 
+  useEffect(() => {
+    fetch('/api/menu')
+      .then(r => r.json())
+      .then(json => { if (json.data) setMenuItems(json.data) })
+
+    const channel = supabase
+      .channel('menu-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'menu_items' },
+        payload => {
+          if (payload.eventType === 'DELETE') {
+            const old = payload.old as { menu_item_id: number }
+            setMenuItems(prev => prev.filter(i => i.id !== old.menu_item_id))
+          } else {
+            const row = payload.new as {
+              menu_item_id: number; name: string; category: string
+              price: number; description: string; is_available: boolean; sort_order: number
+            }
+            const mapped: MenuItem = {
+              id: row.menu_item_id, name: row.name, category: row.category,
+              price: Number(row.price), description: row.description ?? '',
+              available: row.is_available, sort_order: row.sort_order,
+            }
+            setMenuItems(prev => {
+              const exists = prev.find(i => i.id === mapped.id)
+              return exists ? prev.map(i => i.id === mapped.id ? mapped : i) : [...prev, mapped]
+            })
+          }
+        }
+      )
+      .subscribe()
+
+    return () => { supabase.removeChannel(channel) }
+  }, [])
+
+  // Cart helpers
+  function addToCart(item: MenuItem) {
+    setCart(c => {
+      const existing = c.find(ci => ci.id === item.id)
+      if (existing) return c.map(ci => ci.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci)
+      return [...c, { id: item.id, name: item.name, price: item.price, quantity: 1 }]
+    })
+  }
+
+  function setQty(id: number, qty: number) {
+    if (qty <= 0) setCart(c => c.filter(ci => ci.id !== id))
+    else setCart(c => c.map(ci => ci.id === id ? { ...ci, quantity: qty } : ci))
+  }
+
   // Action Menu Functions
   function handleTableClick(num: number) {
     setActionModalTable(num)
@@ -122,19 +188,19 @@ export default function WaiterPage({ onBack }: Props) {
 
   function handleOpenOrderModal() {
     if (actionModalTable) {
+      setCart([])
+      setMenuCategory('All')
+      setMenuSearch('')
       setOrderModalTable(actionModalTable)
       setActionModalTable(null)
     }
   }
 
- // Order Submit Function
-  async function submitOrder(e: React.FormEvent) {
-    e.preventDefault()
-    if (!orderModalTable || !orderItems.trim()) return
+  async function submitOrder() {
+    if (!orderModalTable || cart.length === 0) return
 
     setSubmitting(true)
     try {
-      // 1. Look up the real internal table_id using the visual table_number
       const { data: tableData, error: tableError } = await supabase
         .from('restaurant_tables')
         .select('table_id')
@@ -143,27 +209,21 @@ export default function WaiterPage({ onBack }: Props) {
 
       if (tableError || !tableData) {
         alert('Error: Table not registered in the database.')
-        setSubmitting(false)
         return
       }
 
-      // 2. Submit the order using the real table_id
       const { error } = await supabase
         .from('orders')
         .insert({
-          table_id: tableData.table_id, // <-- We use the hidden ID here!
-          waiter_id: 2, // Hardcoded for demo
-          items: orderItems,
+          table_id: tableData.table_id,
+          waiter_id: 2,
+          items: JSON.stringify(cart),
           status: 'new',
         })
 
       if (error) throw error
 
-      // Automatically mark the table as occupied when an order is sent
       await updateTableStatus(orderModalTable, 'occupied')
-
-      // Reset and close
-      setOrderItems('')
       setOrderModalTable(null)
     } catch (err) {
       console.error('Error submitting order:', err)
@@ -173,6 +233,8 @@ export default function WaiterPage({ onBack }: Props) {
     }
   }
 
+
+  const currentPlan = floors.find(f => f.floor_number === activeFloor)?.data ?? null
 
   return (
     <div className="min-h-screen bg-neutral-50 flex flex-col relative">
@@ -207,11 +269,30 @@ export default function WaiterPage({ onBack }: Props) {
           </div>
         </div>
 
+        {/* Floor tabs */}
+        {!loading && !error && floors.length > 0 && (
+          <div className="flex items-center gap-0 border-b border-neutral-200 mb-4">
+            {floors.map(floor => (
+              <button
+                key={floor.floor_number}
+                onClick={() => setActiveFloor(floor.floor_number)}
+                className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  activeFloor === floor.floor_number
+                    ? 'border-neutral-800 text-neutral-800'
+                    : 'border-transparent text-neutral-400 hover:text-neutral-600'
+                }`}
+              >
+                {floor.name}
+              </button>
+            ))}
+          </div>
+        )}
+
         {loading ? (
           <p className="text-sm text-neutral-400 animate-pulse">Loading…</p>
         ) : error ? (
           <p className="text-sm text-red-400">{error}</p>
-        ) : !plan || plan.tables.length === 0 ? (
+        ) : !currentPlan || currentPlan.tables.length === 0 ? (
           <p className="text-sm text-neutral-400">No floor plan configured yet.</p>
         ) : (
           <div className="rounded-xl overflow-hidden border border-neutral-200 bg-white">
@@ -228,11 +309,11 @@ export default function WaiterPage({ onBack }: Props) {
               </defs>
               <rect width={SVG_WIDTH} height={SVG_HEIGHT} fill="url(#grid)" />
 
-              {plan.rooms.map(room => (
+              {currentPlan.rooms.map(room => (
                 <RoomPolygon key={room.id} room={room} />
               ))}
 
-              {plan.tables.map(t => {
+              {currentPlan.tables.map(t => {
                 const status = statuses[t.num] ?? 'available'
                 return (
                   <g
@@ -272,10 +353,16 @@ export default function WaiterPage({ onBack }: Props) {
               </button>
               
               <hr className="my-2 border-neutral-100" />
-              
-              <button onClick={handleOpenOrderModal} className="w-full py-3 rounded-xl bg-neutral-800 text-white text-sm font-semibold hover:bg-neutral-700 transition">
-                Create Order
-              </button>
+
+              {(statuses[actionModalTable] ?? 'available') === 'occupied' ? (
+                <button onClick={handleOpenOrderModal} className="w-full py-3 rounded-xl bg-neutral-800 text-white text-sm font-semibold hover:bg-neutral-700 transition">
+                  Create Order
+                </button>
+              ) : (
+                <div className="w-full py-3 rounded-xl bg-neutral-100 text-neutral-400 text-sm font-semibold text-center cursor-not-allowed">
+                  Create Order (mark as Occupied first)
+                </div>
+              )}
               
               <button onClick={() => setActionModalTable(null)} className="mt-2 w-full py-3 rounded-xl text-neutral-500 text-sm font-medium hover:bg-neutral-50 transition">
                 Cancel
@@ -286,35 +373,121 @@ export default function WaiterPage({ onBack }: Props) {
       )}
 
       {/* ORDER MODAL */}
-      {orderModalTable !== null && (
-        <div className="fixed inset-0 bg-neutral-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 border border-neutral-100">
-            <h2 className="text-xl font-semibold text-neutral-800 mb-1">New Order</h2>
-            <p className="text-sm text-neutral-500 mb-6">Creating ticket for Table {orderModalTable}</p>
-            
-            <form onSubmit={submitOrder}>
-              <label className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-2">Order Items</label>
-              <textarea
-                autoFocus
-                value={orderItems}
-                onChange={e => setOrderItems(e.target.value)}
-                placeholder="e.g. 2x Burger, 1x Cola"
-                disabled={submitting}
-                className="w-full px-4 py-3 rounded-xl border border-neutral-200 bg-neutral-50 text-neutral-800 placeholder-neutral-300 text-sm focus:outline-none focus:ring-2 focus:ring-neutral-800 transition min-h-[120px] resize-none disabled:opacity-50"
-              />
-              
-              <div className="flex gap-3 mt-6">
-                <button type="button" onClick={() => setOrderModalTable(null)} disabled={submitting} className="flex-1 py-3 rounded-xl border border-neutral-200 text-neutral-600 text-sm font-medium hover:bg-neutral-50 transition disabled:opacity-50">
-                  Cancel
-                </button>
-                <button type="submit" disabled={!orderItems.trim() || submitting} className="flex-1 py-3 rounded-xl bg-neutral-800 text-white text-sm font-medium hover:bg-neutral-700 disabled:opacity-50 transition">
-                  {submitting ? 'Sending…' : 'Send to Kitchen'}
-                </button>
+      {orderModalTable !== null && (() => {
+        const categories = ['All', ...Array.from(new Set(menuItems.map(i => i.category)))]
+        const q = menuSearch.trim().toLowerCase()
+        const visibleItems = menuItems.filter(i => {
+          const matchSearch = !q || i.name.toLowerCase().includes(q) || i.description.toLowerCase().includes(q)
+          const matchCategory = menuCategory === 'All' || i.category === menuCategory
+          return matchSearch && matchCategory
+        })
+        const total = cart.reduce((s, ci) => s + ci.price * ci.quantity, 0)
+
+        return (
+          <div className="fixed inset-0 bg-neutral-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg border border-neutral-100 flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="px-6 pt-6 pb-3 border-b border-neutral-100 shrink-0">
+                <h2 className="text-xl font-semibold text-neutral-800">New Order</h2>
+                <p className="text-sm text-neutral-400 mt-0.5 mb-3">Table {orderModalTable}</p>
+                <input
+                  type="search"
+                  placeholder="Search menu…"
+                  value={menuSearch}
+                  onChange={e => setMenuSearch(e.target.value)}
+                  className="w-full px-4 py-2 rounded-xl border border-neutral-200 text-sm bg-neutral-50 focus:outline-none focus:ring-2 focus:ring-neutral-800 transition"
+                />
               </div>
-            </form>
+
+              {/* Category tabs — hidden when searching */}
+              {!q && (
+                <div className="flex items-center gap-0 px-6 border-b border-neutral-100 shrink-0 overflow-x-auto">
+                  {categories.map(cat => (
+                    <button
+                      key={cat}
+                      onClick={() => setMenuCategory(cat)}
+                      className={`px-3 py-2.5 text-sm font-medium border-b-2 -mb-px whitespace-nowrap transition-colors ${
+                        menuCategory === cat
+                          ? 'border-neutral-800 text-neutral-800'
+                          : 'border-transparent text-neutral-400 hover:text-neutral-600'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Menu items */}
+              <div className="flex-1 overflow-y-auto">
+                {menuItems.length === 0 ? (
+                  <p className="px-6 py-8 text-sm text-neutral-400 text-center">No menu items configured yet.</p>
+                ) : visibleItems.length === 0 ? (
+                  <p className="px-6 py-8 text-sm text-neutral-400 text-center">Nothing found.</p>
+                ) : (
+                  <ul className="divide-y divide-neutral-50">
+                    {visibleItems.map(item => {
+                      const inCart = cart.find(ci => ci.id === item.id)
+                      const unavailable = !item.available
+                      return (
+                        <li key={item.id} className={`flex items-center gap-3 px-6 py-3 transition-colors ${unavailable ? 'opacity-50' : 'hover:bg-neutral-50'}`}>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <p className={`text-sm font-medium truncate ${unavailable ? 'text-neutral-400 line-through' : 'text-neutral-800'}`}>{item.name}</p>
+                              {unavailable && <span className="text-xs text-neutral-400 bg-neutral-100 px-1.5 py-0.5 rounded shrink-0">Unavailable</span>}
+                            </div>
+                            {item.description && (
+                              <p className="text-xs text-neutral-400 truncate">{item.description}</p>
+                            )}
+                          </div>
+                          <span className="text-sm text-neutral-500 shrink-0">{item.price.toFixed(2)}</span>
+                          {unavailable ? (
+                            <div className="w-6 h-6 shrink-0" />
+                          ) : inCart ? (
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button onClick={() => setQty(item.id, inCart.quantity - 1)} className="w-6 h-6 rounded-full border border-neutral-200 text-neutral-600 text-sm flex items-center justify-center hover:border-neutral-400 transition">−</button>
+                              <span className="w-5 text-center text-sm font-medium text-neutral-800">{inCart.quantity}</span>
+                              <button onClick={() => setQty(item.id, inCart.quantity + 1)} className="w-6 h-6 rounded-full bg-neutral-800 text-white text-sm flex items-center justify-center hover:bg-neutral-700 transition">+</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => addToCart(item)} className="w-6 h-6 rounded-full bg-neutral-800 text-white text-sm flex items-center justify-center hover:bg-neutral-700 transition shrink-0">+</button>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
+              </div>
+
+              {/* Cart summary + actions */}
+              <div className="px-6 py-4 border-t border-neutral-100 shrink-0">
+                {cart.length > 0 && (
+                  <div className="mb-3 space-y-1">
+                    {cart.map(ci => (
+                      <div key={ci.id} className="flex justify-between text-sm text-neutral-600">
+                        <span>{ci.quantity}× {ci.name}</span>
+                        <span className="font-medium text-neutral-800">{(ci.price * ci.quantity).toFixed(2)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between text-sm font-semibold text-neutral-800 pt-1 border-t border-neutral-100 mt-1">
+                      <span>Total</span>
+                      <span>{total.toFixed(2)}</span>
+                    </div>
+                  </div>
+                )}
+                <div className="flex gap-3">
+                  <button onClick={() => setOrderModalTable(null)} disabled={submitting} className="flex-1 py-3 rounded-xl border border-neutral-200 text-neutral-600 text-sm font-medium hover:bg-neutral-50 transition disabled:opacity-50">
+                    Cancel
+                  </button>
+                  <button onClick={submitOrder} disabled={cart.length === 0 || submitting} className="flex-1 py-3 rounded-xl bg-neutral-800 text-white text-sm font-medium hover:bg-neutral-700 disabled:opacity-50 transition">
+                    {submitting ? 'Sending…' : `Send to Kitchen${cart.length > 0 ? ` (${cart.reduce((s, ci) => s + ci.quantity, 0)})` : ''}`}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      })()}
     </div>
   )
 }

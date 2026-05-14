@@ -63,10 +63,11 @@ const TR = 18
 interface Props {
   initial?: Plan
   planId?: number
+  tableNumOffset?: number
   onSave: (plan: Plan & { id?: number }) => Promise<void>
 }
 
-export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
+export default function FloorPlanEditor({ initial, planId, tableNumOffset = 0, onSave }: Props) {
   const [rooms, setRooms] = useState<Room[]>(initial?.rooms ?? [])
   const [tables, setTables] = useState<TableEl[]>(initial?.tables ?? [])
   const [draft, setDraft] = useState<Pt[]>([])
@@ -102,7 +103,8 @@ export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
     }
 
     if (mode === 'place' && canPlace(p, rooms, tables)) {
-      const maxNum = tables.length ? Math.max(...tables.map(t => t.num)) : 0
+      const localMax = tables.length ? Math.max(...tables.map(t => t.num)) : 0
+      const maxNum = Math.max(localMax, tableNumOffset)
       setTables(ts => [...ts, { id: uid(), num: maxNum + 1, x: p.x, y: p.y }])
     }
   }
@@ -112,19 +114,13 @@ export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
     const room = rooms.find(r => r.id === id)
     setRooms(rs => rs.filter(r => r.id !== id))
     if (room && !room.obstacle) {
-      setTables(ts => {
-        const kept = ts.filter(t => !pointInPoly({ x: t.x, y: t.y }, room.vertices))
-        return kept.map((t, i) => ({ ...t, num: i + 1 }))
-      })
+      setTables(ts => ts.filter(t => !pointInPoly({ x: t.x, y: t.y }, room.vertices)))
     }
   }
 
   function eraseTable(id: string, e: React.MouseEvent) {
     e.stopPropagation()
-    const removed = tables.find(t => t.id === id)!
-    setTables(ts =>
-      ts.filter(t => t.id !== id).map(t => t.num > removed.num ? { ...t, num: t.num - 1 } : t)
-    )
+    setTables(ts => ts.filter(t => t.id !== id))
   }
 
   async function save() {

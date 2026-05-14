@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import type { User, Role } from '@restaurant-manager/shared'
 import FloorPlanEditor, { type Plan } from './components/FloorPlanEditor'
+import MenuEditor from './components/MenuEditor'
+import UserManager from './components/UserManager'
 import RunnerPage from './components/RunnerPage'
 import WaiterPage from './components/WaiterPage'
 import KitchenPage from './components/KitchenPage'
@@ -17,32 +19,100 @@ const ALL_ROLES: Role[] = ['admin', 'waiter', 'kitchen', 'runner']
 
 // ── Admin page ────────────────────────────────────────────────────────────────
 
+type AdminSection = 'floor' | 'menu' | 'users'
+
+type FloorData = {
+  id?: number
+  floor_number: number
+  name: string
+  data: Plan
+}
+
 function AdminPage({ onBack }: { onBack: () => void }) {
-  const [plan, setPlan] = useState<Plan | undefined>()
-  const [planId, setPlanId] = useState<number | undefined>()
+  const [section, setSection] = useState<AdminSection>('floor')
+  const [floors, setFloors] = useState<FloorData[]>([])
+  const [activeFloor, setActiveFloor] = useState(1)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch('/api/floor-plan')
+    fetch('/api/floor-plans')
       .then(r => r.json())
       .then(json => {
-        if (json.data) {
-          setPlanId(json.data.id)
-          setPlan(json.data.data as Plan)
+        if (json.data?.length) {
+          const loaded: FloorData[] = json.data.map((f: { id: number; floor_number: number; name: string; data: Plan }) => ({
+            id: f.id,
+            floor_number: f.floor_number,
+            name: f.name,
+            data: f.data as Plan,
+          }))
+          setFloors(loaded)
+          setActiveFloor(loaded[0].floor_number)
+        } else {
+          setFloors([{ floor_number: 1, name: 'Floor 1', data: { rooms: [], tables: [] } }])
+          setActiveFloor(1)
         }
       })
       .finally(() => setLoading(false))
   }, [])
 
-  async function handleSave(data: Plan & { id?: number }) {
-    const res = await fetch('/api/floor-plan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: data.id, rooms: data.rooms, tables: data.tables }),
-    })
-    const json = await res.json()
-    if (json.data?.id) setPlanId(json.data.id)
+  function makeSaveHandler(floorNumber: number) {
+    return async (data: Plan & { id?: number }) => {
+      const floor = floors.find(f => f.floor_number === floorNumber)
+      const res = await fetch('/api/floor-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: data.id,
+          floor_number: floorNumber,
+          name: floor?.name,
+          rooms: data.rooms,
+          tables: data.tables,
+        }),
+      })
+      const json = await res.json()
+      if (json.data?.id) {
+        setFloors(fs => fs.map(f =>
+          f.floor_number === floorNumber
+            ? { ...f, id: json.data.id, data: { rooms: data.rooms, tables: data.tables } }
+            : f
+        ))
+      }
+    }
   }
+
+  function addFloor() {
+    const maxFloor = Math.max(...floors.map(f => f.floor_number), 0)
+    const n = maxFloor + 1
+    const newFloor: FloorData = {
+      floor_number: n,
+      name: `Floor ${n}`,
+      data: { rooms: [], tables: [] },
+    }
+    setFloors(fs => [...fs, newFloor])
+    setActiveFloor(n)
+  }
+
+  async function deleteFloor(floorNumber: number) {
+    const floor = floors.find(f => f.floor_number === floorNumber)
+    if (floor?.id) {
+      await fetch(`/api/floor-plan/${floor.id}`, { method: 'DELETE' })
+    }
+    const remaining = floors.filter(f => f.floor_number !== floorNumber)
+    setFloors(remaining)
+    if (activeFloor === floorNumber && remaining.length > 0) {
+      setActiveFloor(remaining[0].floor_number)
+    }
+  }
+
+  const currentFloor = floors.find(f => f.floor_number === activeFloor)
+
+  // Global max table num across all floors except the active one (for offset)
+  const tableNumOffset = Math.max(
+    0,
+    ...floors
+      .filter(f => f.floor_number !== activeFloor)
+      .flatMap(f => f.data.tables.map(t => t.num))
+  )
 
   return (
     <div className="min-h-screen bg-neutral-50 flex flex-col">
@@ -58,12 +128,72 @@ function AdminPage({ onBack }: { onBack: () => void }) {
         </button>
       </header>
       <main className="flex-1 flex flex-col px-6 py-6">
-        <h1 className="text-xl font-semibold text-neutral-800 mb-4">Floor plan</h1>
+        {/* Section tabs */}
+        <div className="flex items-center gap-2 mb-6">
+          {(['floor', 'menu', 'users'] as AdminSection[]).map(s => (
+            <button
+              key={s}
+              onClick={() => setSection(s)}
+              className={`px-5 py-2 rounded-lg text-base font-semibold transition-colors ${
+                section === s
+                  ? 'bg-neutral-900 text-white'
+                  : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100'
+              }`}
+            >
+              {s === 'floor' ? 'Floor plan' : s === 'menu' ? 'Menu' : 'Users'}
+            </button>
+          ))}
+        </div>
+
+        {section === 'menu' && <MenuEditor />}
+        {section === 'users' && <UserManager />}
+
+        {section === 'floor' && <>
+        {/* Floor tabs */}
+        <div className="flex items-center gap-0 border-b border-neutral-200 mb-4">
+          {floors.map(floor => (
+            <div key={floor.floor_number} className="flex items-center">
+              <button
+                onClick={() => setActiveFloor(floor.floor_number)}
+                className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  activeFloor === floor.floor_number
+                    ? 'border-neutral-800 text-neutral-800'
+                    : 'border-transparent text-neutral-400 hover:text-neutral-600'
+                }`}
+              >
+                {floor.name}
+              </button>
+              {floors.length > 1 && (
+                <button
+                  onClick={() => deleteFloor(floor.floor_number)}
+                  title={`Delete ${floor.name}`}
+                  className="ml-0.5 mr-1 w-4 h-4 rounded text-neutral-300 hover:text-red-400 text-xs leading-none transition-colors"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            onClick={addFloor}
+            className="px-3 py-2 text-sm text-neutral-400 hover:text-neutral-700 transition-colors"
+          >
+            + Add floor
+          </button>
+        </div>
+
         {loading ? (
           <p className="text-sm text-neutral-400 animate-pulse">Loading…</p>
-        ) : (
-          <FloorPlanEditor initial={plan} planId={planId} onSave={handleSave} />
-        )}
+        ) : currentFloor ? (
+          <FloorPlanEditor
+            key={activeFloor}
+            initial={currentFloor.data}
+            planId={currentFloor.id}
+            tableNumOffset={tableNumOffset}
+            onSave={makeSaveHandler(activeFloor)}
+          />
+        ) : null}
+        </>}
       </main>
     </div>
   )

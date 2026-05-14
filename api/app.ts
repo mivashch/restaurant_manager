@@ -78,38 +78,42 @@ app.post('/auth/login', async (c) => {
   })
 })
 
+app.get('/floor-plans', async (c) => {
+  const { data, error } = await supabase
+    .from('floor_plans')
+    .select('*')
+    .order('floor_number', { ascending: true })
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data: data ?? [], error: null })
+})
+
+// Kept for backward-compat (returns floor 1)
 app.get('/floor-plan', async (c) => {
   const { data, error } = await supabase
     .from('floor_plans')
     .select('*')
-    .order('updated_at', { ascending: false })
+    .order('floor_number', { ascending: true })
     .limit(1)
     .maybeSingle()
 
-  if (error) {
-    return c.json({ data: null, error: error.message }, 500)
-  }
-
+  if (error) return c.json({ data: null, error: error.message }, 500)
   return c.json({ data, error: null })
 })
 
 app.post('/floor-plan', async (c) => {
   const body = await c.req.json<{
     id?: number
+    floor_number?: number
     name?: string
     rooms: unknown
     tables: Array<{ num: number }>
   }>()
 
-  const { id, name, rooms, tables } = body
+  const { id, floor_number = 1, name, rooms, tables } = body
   const now = new Date().toISOString()
 
-  let result:
-    | { data: unknown; error: { message: string } | null }
-    | {
-        data: unknown
-        error: Error | null
-      }
+  let result: { data: unknown; error: { message: string } | null }
 
   if (id) {
     const { data, error } = await supabase
@@ -118,32 +122,60 @@ app.post('/floor-plan', async (c) => {
       .eq('id', id)
       .select()
       .single()
-
     result = { data, error }
   } else {
     const { data, error } = await supabase
       .from('floor_plans')
-      .insert({ name: name ?? 'Main Floor', data: { rooms, tables } })
+      .insert({ name: name ?? `Floor ${floor_number}`, floor_number, data: { rooms, tables } })
       .select()
       .single()
-
     result = { data, error }
   }
 
-  if (!result.error && tables?.length) {
-    await supabase.from('restaurant_tables').upsert(
-      tables.map((t) => ({
-        table_number: t.num,
-        status: 'available',
-      })),
-      { onConflict: 'table_number', ignoreDuplicates: true },
-    )
+  if (!result.error) {
+    const tableNums = tables?.map((t) => t.num) ?? []
+
+    if (tableNums.length) {
+      // Remove tables from this floor no longer in the plan
+      await supabase
+        .from('restaurant_tables')
+        .delete()
+        .not('table_number', 'in', `(${tableNums.join(',')})`)
+        .in('table_number', (
+          await supabase
+            .from('restaurant_tables')
+            .select('table_number')
+        ).data?.map((r) => r.table_number).filter((n) => !tableNums.includes(n)) ?? [])
+
+      await supabase.from('restaurant_tables').upsert(
+        tables.map((t) => ({ table_number: t.num, status: 'available' })),
+        { onConflict: 'table_number', ignoreDuplicates: true },
+      )
+    }
   }
 
-  return c.json({
-    data: result.data,
-    error: result.error?.message ?? null,
-  })
+  return c.json({ data: result.data, error: result.error?.message ?? null })
+})
+
+app.delete('/floor-plan/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!id) return c.json({ data: null, error: 'Invalid id' }, 400)
+
+  const { data: plan } = await supabase
+    .from('floor_plans')
+    .select('data')
+    .eq('id', id)
+    .single()
+
+  if (plan) {
+    const tableNums = (plan.data as { tables: Array<{ num: number }> })?.tables?.map((t) => t.num) ?? []
+    if (tableNums.length) {
+      await supabase.from('restaurant_tables').delete().in('table_number', tableNums)
+    }
+  }
+
+  const { error } = await supabase.from('floor_plans').delete().eq('id', id)
+  return c.json({ data: null, error: error?.message ?? null })
 })
 
 app.patch('/tables/:num/status', async (c) => {
@@ -260,6 +292,186 @@ app.patch('/orders/:id/take', async (c) => {
   order.status = 'served'
 
   return c.json({ data: order, error: null })
+})
+
+// ── Menu ──────────────────────────────────────────────────────────────────────
+
+const MENU_SELECT = 'menu_item_id, name, category, price, description, is_available, sort_order'
+
+type DbMenuItem = {
+  menu_item_id: number
+  name: string
+  category: string
+  price: number
+  description: string
+  is_available: boolean
+  sort_order: number
+}
+
+function mapMenuItem(r: DbMenuItem) {
+  return {
+    id: r.menu_item_id,
+    name: r.name,
+    category: r.category,
+    price: Number(r.price),
+    description: r.description ?? '',
+    available: r.is_available,
+    sort_order: r.sort_order,
+  }
+}
+
+app.get('/menu', async (c) => {
+  const { data, error } = await supabase
+    .from('menu_items')
+    .select(MENU_SELECT)
+    .order('category')
+    .order('sort_order')
+    .order('name')
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data: (data ?? []).map(r => mapMenuItem(r as DbMenuItem)), error: null })
+})
+
+app.post('/menu', async (c) => {
+  const body = await c.req.json<{
+    name: string
+    category: string
+    price: number
+    description?: string
+    available?: boolean
+    sort_order?: number
+  }>()
+
+  const { data, error } = await supabase
+    .from('menu_items')
+    .insert({
+      name: body.name,
+      category: body.category,
+      price: body.price,
+      description: body.description ?? '',
+      is_available: body.available ?? true,
+      sort_order: body.sort_order ?? 0,
+    })
+    .select(MENU_SELECT)
+    .single()
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data: mapMenuItem(data as DbMenuItem), error: null })
+})
+
+app.put('/menu/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  const body = await c.req.json<{
+    name?: string
+    category?: string
+    price?: number
+    description?: string
+    available?: boolean
+    sort_order?: number
+  }>()
+
+  const dbUpdate: Partial<DbMenuItem> = {}
+  if (body.name !== undefined) dbUpdate.name = body.name
+  if (body.category !== undefined) dbUpdate.category = body.category
+  if (body.price !== undefined) dbUpdate.price = body.price
+  if (body.description !== undefined) dbUpdate.description = body.description
+  if (body.available !== undefined) dbUpdate.is_available = body.available
+  if (body.sort_order !== undefined) dbUpdate.sort_order = body.sort_order
+
+  const { data, error } = await supabase
+    .from('menu_items')
+    .update(dbUpdate)
+    .eq('menu_item_id', id)
+    .select(MENU_SELECT)
+    .single()
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data: mapMenuItem(data as DbMenuItem), error: null })
+})
+
+app.delete('/menu/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  const { error } = await supabase.from('menu_items').delete().eq('menu_item_id', id)
+  return c.json({ data: null, error: error?.message ?? null })
+})
+
+// ── Users ─────────────────────────────────────────────────────────────────────
+
+type DbUser = {
+  user_id: number
+  username: string
+  roles: { name: string } | null
+}
+
+function mapUser(r: DbUser) {
+  return { id: r.user_id, username: r.username, role: r.roles?.name ?? '' }
+}
+
+app.get('/users', async (c) => {
+  const { data, error } = await supabase
+    .from('users')
+    .select('user_id, username, roles(name)')
+    .order('role_id')
+    .order('username')
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data: (data ?? []).map(r => mapUser(r as unknown as DbUser)), error: null })
+})
+
+app.post('/users', async (c) => {
+  const body = await c.req.json<{ username: string; role: string }>()
+
+  const { data: roleData, error: roleError } = await supabase
+    .from('roles')
+    .select('role_id')
+    .eq('name', body.role)
+    .single()
+
+  if (roleError || !roleData) return c.json({ data: null, error: 'Invalid role' }, 400)
+
+  const { data, error } = await supabase
+    .from('users')
+    .insert({ username: body.username.trim(), password_hash: '', role_id: roleData.role_id })
+    .select('user_id, username, roles(name)')
+    .single()
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data: mapUser(data as unknown as DbUser), error: null })
+})
+
+app.put('/users/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  const body = await c.req.json<{ username?: string; role?: string }>()
+
+  const update: { username?: string; role_id?: number } = {}
+  if (body.username) update.username = body.username.trim()
+
+  if (body.role) {
+    const { data: roleData, error: roleError } = await supabase
+      .from('roles')
+      .select('role_id')
+      .eq('name', body.role)
+      .single()
+
+    if (roleError || !roleData) return c.json({ data: null, error: 'Invalid role' }, 400)
+    update.role_id = roleData.role_id
+  }
+
+  const { data, error } = await supabase
+    .from('users')
+    .update(update)
+    .eq('user_id', id)
+    .select('user_id, username, roles(name)')
+    .single()
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data: mapUser(data as unknown as DbUser), error: null })
+})
+
+app.delete('/users/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  const { error } = await supabase.from('users').delete().eq('user_id', id)
+  return c.json({ data: null, error: error?.message ?? null })
 })
 
 export default app

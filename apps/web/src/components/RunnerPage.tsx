@@ -26,10 +26,25 @@ export default function RunnerPage({
   onBack: () => void
 }) {
   const [orders, setOrders] = useState<RunnerOrder[]>([])
+  const [tableMap, setTableMap] = useState<Record<number, number>>({})
   const [loading, setLoading] = useState(true)
   const [processingId, setProcessingId] = useState<number | null>(null)
 
   useEffect(() => {
+    async function loadTableMap() {
+      try {
+        const { data, error } = await supabase.from('restaurant_tables').select('table_id, table_number')
+        if (error) throw error
+        if (data) {
+          const map: Record<number, number> = {}
+          data.forEach(t => { map[t.table_id] = t.table_number })
+          setTableMap(map)
+        }
+      } catch (err) {
+        console.error('Failed to load table map:', err) 
+      }
+    }
+
     async function loadOrders() {
       try {
         const { data, error } = await supabase
@@ -53,6 +68,7 @@ export default function RunnerPage({
       }
     }
 
+    loadTableMap()
     loadOrders()
 
     const channel = supabase
@@ -65,15 +81,33 @@ export default function RunnerPage({
           table: 'orders',
         },
         (payload) => {
+          const order = payload.new as RunnerOrder | null
           const oldOrder = payload.old as RunnerOrder | null
 
-          if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-             loadOrders()
+
+          if (payload.eventType === 'INSERT') {
+            if (order && order.status === 'ready') {
+              setOrders((prev) => {
+                const exists = prev.find((o) => o.order_id === order.order_id)
+                if (exists) return prev
+                return [...prev, order].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+              })
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            if (order) {
+              if (order.status === 'ready') {
+                setOrders((prev) => {
+                  const exists = prev.find((o) => o.order_id === order.order_id)
+                  if (exists) return prev.map((o) => o.order_id === order.order_id ? { ...o, ...order } : o)
+                  return [...prev, order].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+                })
+              } else {
+                setOrders((prev) => prev.filter((o) => o.order_id !== order.order_id))
+              }
+            }
           } else if (payload.eventType === 'DELETE') {
             if (oldOrder) {
-              setOrders((prev) =>
-                prev.filter((o) => o.order_id !== oldOrder.order_id)
-              )
+              setOrders((prev) => prev.filter((o) => o.order_id !== oldOrder.order_id))
             }
           }
         }
@@ -107,7 +141,6 @@ export default function RunnerPage({
       setProcessingId(null) 
     }
   }
-
 
   return (
     <div className="min-h-screen bg-neutral-100 flex flex-col">
@@ -145,7 +178,8 @@ export default function RunnerPage({
                       Order #{order.order_id}
                     </p>
                     <p className="text-2xl font-bold text-neutral-900 mt-1">
-                      Table {order.restaurant_tables?.table_number ?? order.table_id}
+                      {}
+                      Table {tableMap[order.table_id] ?? order.restaurant_tables?.table_number ?? order.table_id}
                     </p>
                   </div>
                   <p className="text-sm text-slate-500 whitespace-nowrap">

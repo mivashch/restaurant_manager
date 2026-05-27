@@ -1,24 +1,36 @@
 import { useState, useEffect } from 'react'
 import type { User, Role } from '@restaurant-manager/shared'
 import FloorPlanEditor, { type Plan } from './components/FloorPlanEditor'
-import RunnerPage from './components/RunnerPage'
+import { usePersistedState } from './lib/usePersistedState'
+import MenuEditor from './components/MenuEditor'
+import UserManager from './components/UserManager'
 import WaiterPage from './components/WaiterPage'
 import KitchenPage from './components/KitchenPage'
+
 
 const ROLE_LABELS: Record<Role, string> = {
   admin: 'Admin',
   waiter: 'Waiter',
   kitchen: 'Kitchen',
-  runner: 'Runner',
 }
 
-const ALL_ROLES: Role[] = ['admin', 'waiter', 'kitchen', 'runner']
+const ALL_ROLES: Role[] = ['admin', 'waiter', 'kitchen']
 
 // ── Admin page ────────────────────────────────────────────────────────────────
 
+type AdminSection = 'floor' | 'menu' | 'users'
+
+type FloorData = {
+  id?: number
+  floor_number: number
+  name: string
+  data: Plan
+}
+
 function AdminPage({ onBack }: { onBack: () => void }) {
-  const [plan, setPlan] = useState<Plan | undefined>()
-  const [planId, setPlanId] = useState<number | undefined>()
+  const [section, setSection] = usePersistedState<AdminSection>('rm_admin_section', 'floor')
+  const [floors, setFloors] = useState<FloorData[]>([])
+  const [activeFloor, setActiveFloor] = usePersistedState('rm_admin_floor', 1)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -29,9 +41,19 @@ function AdminPage({ onBack }: { onBack: () => void }) {
         return r.json()
       })
       .then(json => {
-        if (json.data) {
-          setPlanId(json.data.id)
-          setPlan(json.data.data as Plan)
+        if (json.data?.length) {
+          const loaded: FloorData[] = json.data.map((f: { id: number; floor_number: number; name: string; data: Plan }) => ({
+            id: f.id,
+            floor_number: f.floor_number,
+            name: f.name,
+            data: f.data as Plan,
+          }))
+          setFloors(loaded)
+          const valid = loaded.find(f => f.floor_number === activeFloor)
+          if (!valid) setActiveFloor(loaded[0].floor_number)
+        } else {
+          setFloors([{ floor_number: 1, name: 'Floor 1', data: { rooms: [], tables: [] } }])
+          setActiveFloor(1)
         }
       })
       .catch(() => setError('Failed to load floor plans'))
@@ -129,7 +151,60 @@ function AdminPage({ onBack }: { onBack: () => void }) {
         </button>
       </header>
       <main className="flex-1 flex flex-col px-6 py-6">
-        <h1 className="text-xl font-semibold text-neutral-800 mb-4">Floor plan</h1>
+        {/* Section tabs */}
+        <div className="flex items-center gap-2 mb-6">
+          {(['floor', 'menu', 'users'] as AdminSection[]).map(s => (
+            <button
+              key={s}
+              onClick={() => setSection(s)}
+              className={`px-5 py-2 rounded-lg text-base font-semibold transition-colors ${
+                section === s
+                  ? 'bg-neutral-900 text-white'
+                  : 'text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100'
+              }`}
+            >
+              {s === 'floor' ? 'Floor plan' : s === 'menu' ? 'Menu' : 'Users'}
+            </button>
+          ))}
+        </div>
+
+        {section === 'menu' && <MenuEditor />}
+        {section === 'users' && <UserManager />}
+
+        {section === 'floor' && <>
+        {/* Floor tabs */}
+        <div className="flex items-center gap-0 border-b border-neutral-200 mb-4">
+          {floors.map(floor => (
+            <div key={floor.floor_number} className="flex items-center">
+              <button
+                onClick={() => setActiveFloor(floor.floor_number)}
+                className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                  activeFloor === floor.floor_number
+                    ? 'border-neutral-800 text-neutral-800'
+                    : 'border-transparent text-neutral-400 hover:text-neutral-600'
+                }`}
+              >
+                {floor.name}
+              </button>
+              {floors.length > 1 && (
+                <button
+                  onClick={() => deleteFloor(floor.floor_number)}
+                  title={`Delete ${floor.name}`}
+                  className="ml-0.5 mr-1 w-4 h-4 rounded text-neutral-300 hover:text-red-400 text-xs leading-none transition-colors"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          ))}
+          <button
+            onClick={addFloor}
+            className="px-3 py-2 text-sm text-neutral-400 hover:text-neutral-700 transition-colors"
+          >
+            + Add floor
+          </button>
+        </div>
+
         {loading ? (
           <p className="text-sm text-neutral-400 animate-pulse">Loading…</p>
         ) : error ? (
@@ -143,6 +218,7 @@ function AdminPage({ onBack }: { onBack: () => void }) {
             onSave={makeSaveHandler(activeFloor)}
           />
         ) : null}
+        </>}
       </main>
     </div>
   )
@@ -207,13 +283,21 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
 
 // ── Role selection ────────────────────────────────────────────────────────────
 
-function RoleScreen({ user, onSelect }: { user: User; onSelect: (role: Role) => void }) {
+function RoleScreen({ user, onSelect, onLogout }: { user: User; onSelect: (role: Role) => void; onLogout: () => void }) {
   return (
     <main className="flex-1 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <p className="text-xs font-medium uppercase tracking-wider text-neutral-400 mb-1">
-          Welcome, {user.name}
-        </p>
+        <div className="flex items-baseline justify-between mb-1">
+          <p className="text-xs font-medium uppercase tracking-wider text-neutral-400">
+            Welcome, {user.name}
+          </p>
+          <button
+            onClick={onLogout}
+            className="text-xs text-neutral-400 hover:text-neutral-600 transition underline underline-offset-4"
+          >
+            Sign out
+          </button>
+        </div>
         <h1 className="text-2xl font-semibold text-neutral-800 mb-8">Choose role</h1>
         <div className="grid grid-cols-2 gap-3">
           {ALL_ROLES.map(role => {
@@ -242,13 +326,41 @@ function RoleScreen({ user, onSelect }: { user: User; onSelect: (role: Role) => 
 
 // ── Root ──────────────────────────────────────────────────────────────────────
 
+const USER_KEY = 'rm_user'
+const ROLE_KEY = 'rm_role'
+
 export default function App() {
-  const [user, setUser] = useState<User | null>(null)
-  const [activeRole, setActiveRole] = useState<Role | null>(null)
+  const [user, setUser] = useState<User | null>(() => {
+    try {
+      const stored = localStorage.getItem(USER_KEY)
+      return stored ? (JSON.parse(stored) as User) : null
+    } catch { return null }
+  })
+  const [activeRole, setActiveRole] = useState<Role | null>(() => {
+    try { return (sessionStorage.getItem(ROLE_KEY) as Role) || null } catch { return null }
+  })
+
+  useEffect(() => {
+    if (activeRole) sessionStorage.setItem(ROLE_KEY, activeRole)
+    else sessionStorage.removeItem(ROLE_KEY)
+  }, [activeRole])
+
+  function handleLogin(u: User) {
+    localStorage.setItem(USER_KEY, JSON.stringify(u))
+    setUser(u)
+  }
+
+  function handleLogout() {
+    localStorage.removeItem(USER_KEY)
+    sessionStorage.removeItem(ROLE_KEY)
+    setUser(null)
+    setActiveRole(null)
+  }
 
   if (activeRole === 'admin') {
     return <AdminPage onBack={() => setActiveRole(null)} />
   }
+
 
   if (activeRole === 'waiter' && user) {
     return <WaiterPage user={user} onBack={() => setActiveRole(null)} />
@@ -282,7 +394,10 @@ export default function App() {
   return (
     <div className="min-h-screen bg-neutral-50 flex flex-col">
       <Header />
-      {user ? <RoleScreen user={user} onSelect={setActiveRole} /> : <LoginScreen onLogin={setUser} />}
+      {user
+        ? <RoleScreen user={user} onSelect={setActiveRole} onLogout={handleLogout} />
+        : <LoginScreen onLogin={handleLogin} />
+      }
     </div>
   )
 }

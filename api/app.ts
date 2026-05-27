@@ -78,18 +78,26 @@ app.post('/auth/login', async (c) => {
   })
 })
 
+app.get('/floor-plans', async (c) => {
+  const { data, error } = await supabase
+    .from('floor_plans')
+    .select('*')
+    .order('floor_number', { ascending: true })
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+  return c.json({ data: data ?? [], error: null })
+})
+
+// Kept for backward-compat (returns floor 1)
 app.get('/floor-plan', async (c) => {
   const { data, error } = await supabase
     .from('floor_plans')
     .select('*')
-    .order('updated_at', { ascending: false })
+    .order('floor_number', { ascending: true })
     .limit(1)
     .maybeSingle()
 
-  if (error) {
-    return c.json({ data: null, error: error.message }, 500)
-  }
-
+  if (error) return c.json({ data: null, error: error.message }, 500)
   return c.json({ data, error: null })
 })
 
@@ -140,12 +148,13 @@ async function cleanupOrphanTables(): Promise<string | null> {
 app.post('/floor-plan', async (c) => {
   const body = await c.req.json<{
     id?: number
+    floor_number?: number
     name?: string
     rooms: unknown
     tables: Array<{ num: number }>
   }>()
 
-  const { id, name, rooms, tables } = body
+  const { id, floor_number = 1, name, rooms, tables } = body
   const now = new Date().toISOString()
 
   let prevTableNums: number[] = []
@@ -169,15 +178,13 @@ app.post('/floor-plan', async (c) => {
       .eq('id', id)
       .select()
       .single()
-
     result = { data, error }
   } else {
     const { data, error } = await supabase
       .from('floor_plans')
-      .insert({ name: name ?? 'Main Floor', data: { rooms, tables } })
+      .insert({ name: name ?? `Floor ${floor_number}`, floor_number, data: { rooms, tables } })
       .select()
       .single()
-
     result = { data, error }
   }
 
@@ -241,9 +248,26 @@ app.patch('/tables/:num/status', async (c) => {
   const num = Number(c.req.param('num'))
   const { status } = await c.req.json<{ status: string }>()
 
+  const update: Record<string, unknown> = { status }
+
+  if (status === 'available' || status === 'reserved') {
+    update.occupied_at = null
+  } else if (status === 'occupied') {
+    // Only set occupied_at when transitioning from a non-occupied state
+    const { data: current } = await supabase
+      .from('restaurant_tables')
+      .select('status')
+      .eq('table_number', num)
+      .single()
+
+    if (current?.status !== 'occupied') {
+      update.occupied_at = new Date().toISOString()
+    }
+  }
+
   const { data, error } = await supabase
     .from('restaurant_tables')
-    .upsert({ table_number: num, status }, { onConflict: 'table_number' })
+    .upsert({ table_number: num, ...update }, { onConflict: 'table_number' })
     .select()
     .single()
 

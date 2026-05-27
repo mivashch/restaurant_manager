@@ -63,10 +63,11 @@ const TR = 18
 interface Props {
   initial?: Plan
   planId?: number
+  tableNumOffset?: number
   onSave: (plan: Plan & { id?: number }) => Promise<void>
 }
 
-export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
+export default function FloorPlanEditor({ initial, planId, tableNumOffset, onSave }: Props) {
   const [rooms, setRooms] = useState<Room[]>(initial?.rooms ?? [])
   const [tables, setTables] = useState<TableEl[]>(initial?.tables ?? [])
   const [draft, setDraft] = useState<Pt[]>([])
@@ -102,7 +103,8 @@ export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
     }
 
     if (mode === 'place' && canPlace(p, rooms, tables)) {
-      const maxNum = tables.length ? Math.max(...tables.map(t => t.num)) : 0
+      const offset = tableNumOffset ?? 0
+      const maxNum = tables.length ? Math.max(...tables.map(t => t.num)) : offset
       setTables(ts => [...ts, { id: uid(), num: maxNum + 1, x: p.x, y: p.y }])
     }
   }
@@ -114,7 +116,7 @@ export default function FloorPlanEditor({ initial, planId, onSave }: Props) {
     if (room && !room.obstacle) {
       setTables(ts => {
         const kept = ts.filter(t => !pointInPoly({ x: t.x, y: t.y }, room.vertices))
-        return kept.map((t, i) => ({ ...t, num: i + 1 }))
+        return kept.map((t, i) => ({ ...t, num: (tableNumOffset ?? 0) + i + 1 }))
       })
     }
   }

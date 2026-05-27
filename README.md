@@ -67,12 +67,54 @@ restaurant_manager/
 ## CI/CD Pipeline
 
 ```
-push to dev  ->  GitHub Actions (lint + typecheck + build)
+push to dev  ->  GitHub Actions (lint + typecheck + build + migrate dev DB)
                          |
 PR to prod   ->  GitHub Actions (green status required)
                          |
-merge to prod ->  Vercel autodeploy
+merge to prod ->  GitHub Actions (lint + typecheck + build + migrate prod DB)
+                         |
+                  Vercel autodeploy
 ```
+
+## Database migrations
+
+### Automatic migrations
+
+Migrations live in `supabase/migrations/` and are applied automatically by GitHub Actions on every push:
+
+- push to `dev` -> migrations run against the **dev** Supabase project
+- push/merge to `prod` -> migrations run against the **prod** Supabase project
+
+The migrate job in `.github/workflows/ci.yml` runs **after** CI passes (lint + typecheck + build). If CI fails, migrations are skipped.
+
+### Creating a new migration
+
+```bash
+supabase migration new <migration_name>
+# example: supabase migration new add_reservations_table
+```
+
+This creates a new file in `supabase/migrations/` with a timestamp prefix. Write your SQL in that file, then commit and push — the migration will be applied automatically.
+
+### Applying migrations manually
+
+If you need to push migrations without waiting for CI for some reason:
+
+```bash
+# Install Supabase CLI
+
+supabase login
+# You should ask me (Matvii) to add you to the Supabase project in order to push migrations ;)
+
+# Apply to dev
+supabase link --project-ref bnecqktcxftrqjkvwfmp
+supabase db push
+
+# Apply to prod
+supabase link --project-ref enbfcgxomwtxgamwjkrq
+supabase db push
+```
+
 
 ## Branching strategy
 

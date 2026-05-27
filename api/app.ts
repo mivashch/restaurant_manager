@@ -209,6 +209,23 @@ app.post('/floor-plan', async (c) => {
   return c.json({ data: result.data, error: null })
 })
 
+app.get('/tables/locked', async c => {
+  const { data, error } = await supabase
+    .from('restaurant_tables')
+    .select('table_number')
+    .neq('status', 'available')
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  const lockedTableNumbers = [
+    ...new Set((data ?? []).map(table => table.table_number)),
+  ]
+
+  return c.json({ data: lockedTableNumbers, error: null })
+})
+
 // Remove restaurant_tables entries that are no longer referenced by any floor plan
 app.post('/tables/cleanup', async (c) => {
   const { data: floors } = await supabase.from('floor_plans').select('data')

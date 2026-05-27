@@ -1,13 +1,8 @@
-create or replace function prevent_table_change_with_active_orders()
+create or replace function prevent_table_change_if_not_available()
 returns trigger as $$
 begin
-  if exists (
-    select 1
-    from orders
-    where table_id = old.id
-      and status in ('new', 'preparing', 'ready')
-  ) then
-    raise exception 'Cannot modify or delete table with active orders';
+  if old.status <> 'available' then
+    raise exception 'Only available tables can be modified or deleted';
   end if;
 
   return old;
@@ -20,9 +15,9 @@ drop trigger if exists block_delete_active_table on restaurant_tables;
 create trigger block_update_active_table
 before update on restaurant_tables
 for each row
-execute function prevent_table_change_with_active_orders();
+execute function prevent_table_change_if_not_available();
 
 create trigger block_delete_active_table
 before delete on restaurant_tables
 for each row
-execute function prevent_table_change_with_active_orders();
+execute function prevent_table_change_if_not_available();

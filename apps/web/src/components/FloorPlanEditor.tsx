@@ -238,6 +238,7 @@ function canPlace(pt: Pt, rooms: Room[], tables: TableEl[]) {
   return inRoom && !inObst && !tooClose
 }
 
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const W = 1000
@@ -262,6 +263,8 @@ export default function FloorPlanEditor({
 }: Props) {
   const [rooms, setRooms] = useState<Room[]>(initial?.rooms ?? [])
   const [tables, setTables] = useState<TableEl[]>(initial?.tables ?? [])
+  const [lockedTableNumbers, setLockedTableNumbers] = useState<number[]>([])
+  const [error, setError] = useState<string | null>(null)
   const [draft, setDraft] = useState<Pt[]>([])
   const [cursor, setCursor] = useState<Pt | null>(null)
   const [mode, setMode] = useState<Mode>('draw')
@@ -275,6 +278,26 @@ export default function FloorPlanEditor({
       setTables(initial.tables)
     }
   }, [initial])
+
+  useEffect(() => {
+    async function loadLockedTables() {
+      try {
+        const res = await fetch('/api/tables/locked')
+        const json = await res.json()
+        console.log('locked tables:', json.data)
+
+        if (!res.ok) {
+          throw new Error(json.error || 'Failed to load locked tables')
+        }
+
+        setLockedTableNumbers((json.data ?? []).map(Number))
+      } catch {
+        setError('Failed to load locked tables')
+      }
+    }
+
+    loadLockedTables()
+  }, [])
 
   function toSvgPt(e: React.MouseEvent): Pt {
     const svg = svgRef.current!
@@ -319,44 +342,68 @@ export default function FloorPlanEditor({
     e.stopPropagation()
 
     const room = rooms.find(r => r.id === id)
+    if (!room) return
+
+    if (!room.obstacle) {
+      const tablesInside = tables.filter(t =>
+        pointInPoly({ x: t.x, y: t.y }, room.vertices)
+      )
+
+      const hasLockedTable = tablesInside.some(t =>
+        lockedTableNumbers.includes(t.num)
+      )
+
+      if (hasLockedTable) {
+        setError('This room contains tables with active orders and cannot be deleted.')
+        return
+      }
+    }
 
     setRooms(rs => rs.filter(r => r.id !== id))
 
-    if (room && !room.obstacle) {
-      setTables(ts => {
-        const kept = ts.filter(
-          t => !pointInPoly({ x: t.x, y: t.y }, room.vertices)
-        )
-
-        return kept.map((t, i) => ({
-          ...t,
-          num: (tableNumOffset ?? 0) + i + 1,
-        }))
-      })
+    if (!room.obstacle) {
+      setTables(ts =>
+        ts.filter(t => !pointInPoly({ x: t.x, y: t.y }, room.vertices))
+      )
     }
+
+    setError(null)
+  }
+
+
+  function renumberTables(tables: TableEl[]) {
+    return tables
+      .sort((a, b) => a.num - b.num)
+      .map((table, index) => ({
+        ...table,
+        num: index + 1,
+      }))
   }
 
   function eraseTable(id: string, e: React.MouseEvent) {
     e.stopPropagation()
 
-    const removed = tables.find(t => t.id === id)!
+    const table = tables.find(t => t.id === id)
+    if (!table) return
 
-    setTables(ts =>
-      ts
-        .filter(t => t.id !== id)
-        .map(t =>
-          t.num > removed.num
-            ? { ...t, num: t.num - 1 }
-            : t
-        )
-    )
+    if (lockedTableNumbers.includes(table.num)) {
+      setError('This table has active orders and cannot be deleted.')
+      return
+    }
+
+    setTables(ts => ts.filter(t => t.id !== id))
   }
 
   async function save() {
     setSaving(true)
 
     try {
-      await onSave({ rooms, tables, id: planId })
+      const renumberedTables = renumberTables(tables)
+
+      setTables(renumberedTables)
+
+      await onSave({ rooms, tables: renumberedTables, id: planId })
+
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
@@ -555,6 +602,11 @@ export default function FloorPlanEditor({
         </svg>
       </div>
 
+      {error && (
+        <p className="text-sm text-red-500">
+          {error}
+        </p>
+      )}
       <p className="text-xs text-neutral-400">{hint}</p>
     </div>
   )

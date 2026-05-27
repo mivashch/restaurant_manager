@@ -5,10 +5,10 @@ import type { User } from '@restaurant-manager/shared'
 type RunnerOrder = {
   order_id: number
   table_id: number
-  waiter_id: number
   items: string | null
   status: 'new' | 'preparing' | 'ready' | 'served'
   created_at: string
+  restaurant_tables?: { table_number: number } | null
 }
 
 function formatReadyTime(value: string) {
@@ -26,33 +26,51 @@ export default function RunnerPage({
   onBack: () => void
 }) {
   const [orders, setOrders] = useState<RunnerOrder[]>([])
+  const [tableMap, setTableMap] = useState<Record<number, number>>({})
   const [loading, setLoading] = useState(true)
+  const [processingId, setProcessingId] = useState<number | null>(null)
 
   useEffect(() => {
+    async function loadTableMap() {
+      try {
+        const { data, error } = await supabase.from('restaurant_tables').select('table_id, table_number')
+        if (error) throw error
+        if (data) {
+          const map: Record<number, number> = {}
+          data.forEach(t => { map[t.table_id] = t.table_number })
+          setTableMap(map)
+        }
+      } catch (err) {
+        console.error('Failed to load table map:', err) 
+      }
+    }
+
     async function loadOrders() {
       try {
         const { data, error } = await supabase
           .from('orders')
-          .select('*')
+          .select('*, restaurant_tables(table_number)')
           .eq('status', 'ready')
           .order('created_at', { ascending: true })
 
         if (error) {
           console.error('Error loading orders:', error)
+          alert('Failed to load runner orders. Please refresh.')
           return
         }
 
         setOrders(data as RunnerOrder[])
       } catch (err) {
         console.error('Error loading orders:', err)
+        alert('Failed to load runner orders. Please refresh.')
       } finally {
         setLoading(false)
       }
     }
 
+    loadTableMap()
     loadOrders()
 
-    // Subscribe to realtime changes
     const channel = supabase
       .channel('runner-orders')
       .on(
@@ -66,47 +84,30 @@ export default function RunnerPage({
           const order = payload.new as RunnerOrder | null
           const oldOrder = payload.old as RunnerOrder | null
 
+
           if (payload.eventType === 'INSERT') {
             if (order && order.status === 'ready') {
               setOrders((prev) => {
                 const exists = prev.find((o) => o.order_id === order.order_id)
                 if (exists) return prev
-                return [...prev, order].sort(
-                  (a, b) =>
-                    new Date(a.created_at).getTime() -
-                    new Date(b.created_at).getTime()
-                )
+                return [...prev, order].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
               })
             }
           } else if (payload.eventType === 'UPDATE') {
             if (order) {
               if (order.status === 'ready') {
-                // Add to runner view if status changed to ready
                 setOrders((prev) => {
                   const exists = prev.find((o) => o.order_id === order.order_id)
-                  if (exists) {
-                    return prev.map((o) =>
-                      o.order_id === order.order_id ? order : o
-                    )
-                  }
-                  return [...prev, order].sort(
-                    (a, b) =>
-                      new Date(a.created_at).getTime() -
-                      new Date(b.created_at).getTime()
-                  )
+                  if (exists) return prev.map((o) => o.order_id === order.order_id ? { ...o, ...order } : o)
+                  return [...prev, order].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
                 })
               } else {
-                // Remove from runner view if status is not ready
-                setOrders((prev) =>
-                  prev.filter((o) => o.order_id !== order.order_id)
-                )
+                setOrders((prev) => prev.filter((o) => o.order_id !== order.order_id))
               }
             }
           } else if (payload.eventType === 'DELETE') {
             if (oldOrder) {
-              setOrders((prev) =>
-                prev.filter((o) => o.order_id !== oldOrder.order_id)
-              )
+              setOrders((prev) => prev.filter((o) => o.order_id !== oldOrder.order_id))
             }
           }
         }
@@ -119,20 +120,27 @@ export default function RunnerPage({
   }, [])
 
   async function handleDelivered(orderId: number) {
+    setProcessingId(orderId) 
     try {
       const { error } = await supabase
         .from('orders')
-        .update({ status: 'served' })
+        .update({ 
+          status: 'served',
+          runner_id: user.id
+        })
         .eq('order_id', orderId)
 
       if (error) {
         console.error('Error updating order:', error)
+        alert('Failed to update order. Please try again.') 
       }
     } catch (err) {
       console.error('Error updating order:', err)
+      alert('An unexpected error occurred. Please try again.') 
+    } finally {
+      setProcessingId(null) 
     }
   }
-
 
   return (
     <div className="min-h-screen bg-neutral-100 flex flex-col">
@@ -170,7 +178,8 @@ export default function RunnerPage({
                       Order #{order.order_id}
                     </p>
                     <p className="text-2xl font-bold text-neutral-900 mt-1">
-                      Table {order.table_id}
+                      {}
+                      Table {tableMap[order.table_id] ?? order.restaurant_tables?.table_number ?? order.table_id}
                     </p>
                   </div>
                   <p className="text-sm text-slate-500 whitespace-nowrap">
@@ -187,7 +196,8 @@ export default function RunnerPage({
 
                 <button
                   onClick={() => handleDelivered(order.order_id)}
-                  className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+                  disabled={processingId === order.order_id}
+                  className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <svg
                     width="18"
@@ -206,7 +216,7 @@ export default function RunnerPage({
                       strokeLinejoin="round"
                     />
                   </svg>
-                  Mark as Delivered
+                  {processingId === order.order_id ? 'Delivering...' : 'Mark as Delivered'}
                 </button>
               </div>
             ))}

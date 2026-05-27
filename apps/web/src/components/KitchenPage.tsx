@@ -1,22 +1,13 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { User } from '@restaurant-manager/shared'
-
-type CartItem = { id: number; name: string; price: number; quantity: number }
 
 type KitchenOrder = {
   order_id: number
   table_id: number
-  waiter_id: number
   items: string | null
   status: 'new' | 'preparing' | 'ready' | 'served'
   created_at: string
-  restaurant_tables: { table_number: number } | null
-}
-
-function parseItems(raw: string | null): CartItem[] {
-  if (!raw) return []
-  try { return JSON.parse(raw) } catch { return [] }
 }
 
 function formatTime(value: string) {
@@ -34,97 +25,75 @@ export default function KitchenPage({
   onBack: () => void
 }) {
   const [orders, setOrders] = useState<KitchenOrder[]>([])
+  const [tableMap, setTableMap] = useState<Record<number, number>>({})
   const [loading, setLoading] = useState(true)
-
-  // table_id → table_number; stored in ref to avoid stale closures in realtime callbacks
-  const tableMapRef = useRef<Record<number, number>>({})
+  const [processingId, setProcessingId] = useState<number | null>(null)
 
   useEffect(() => {
-    // Build tableMapRef from restaurant_tables
-    supabase
-      .from('restaurant_tables')
-      .select('table_id, table_number')
-      .then(({ data }) => {
-        if (!data) return
-        const map: Record<number, number> = {}
-        data.forEach(t => { map[t.table_id] = t.table_number })
-        tableMapRef.current = map
-      })
-
+    async function loadTableMap() {
+      try {
+        const { data, error } = await supabase.from('restaurant_tables').select('table_id, table_number')
+        if (error) throw error
+        if (data) {
+          const map: Record<number, number> = {}
+          data.forEach(t => { map[t.table_id] = t.table_number })
+          setTableMap(map)
+        }
+      } catch (err) {
+        console.error('Failed to load table map:', err)
+      }
+    }
+    
     async function loadOrders() {
       try {
         const { data, error } = await supabase
           .from('orders')
-          .select('*, restaurant_tables(table_number)')
+          .select('*')
           .in('status', ['new', 'preparing'])
           .order('created_at', { ascending: true })
 
         if (error) {
           console.error('Error loading orders:', error)
+          alert('Failed to load kitchen orders. Please refresh.')
           return
         }
 
         setOrders(data as KitchenOrder[])
       } catch (err) {
         console.error('Error loading orders:', err)
+        alert('Failed to load kitchen orders. Please refresh.')
       } finally {
         setLoading(false)
       }
     }
 
+    loadTableMap()
     loadOrders()
 
     const channel = supabase
       .channel('kitchen-orders')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'orders',
-        },
+        { event: '*', schema: 'public', table: 'orders' },
         (payload) => {
-          const order = payload.new as { order_id: number; table_id: number; items: string | null; created_at: string; status: string } | null
-          const oldOrder = payload.old as { order_id: number } | null
+          const order = payload.new as KitchenOrder | null
+          const oldOrder = payload.old as KitchenOrder | null
 
           if (payload.eventType === 'INSERT') {
             if (order && (order.status === 'new' || order.status === 'preparing')) {
-              const tableNum = tableMapRef.current[order.table_id] ?? null
-              const enriched: KitchenOrder = {
-                order_id: order.order_id,
-                table_id: order.table_id,
-                waiter_id: 0,
-                items: order.items,
-                status: order.status as KitchenOrder['status'],
-                created_at: order.created_at,
-                restaurant_tables: tableNum != null ? { table_number: tableNum } : null,
-              }
               setOrders((prev) => {
-                if (prev.find((o) => o.order_id === enriched.order_id)) return prev
-                return [...prev, enriched].sort(
-                  (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                )
+                const exists = prev.find((o) => o.order_id === order.order_id)
+                if (exists) return prev
+                return [...prev, order].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
               })
             }
           } else if (payload.eventType === 'UPDATE') {
             if (order) {
               if (order.status === 'new' || order.status === 'preparing') {
-                const tableNum = tableMapRef.current[order.table_id] ?? null
-                const enriched: KitchenOrder = {
-                  order_id: order.order_id,
-                  table_id: order.table_id,
-                  waiter_id: 0,
-                  items: order.items,
-                  status: order.status as KitchenOrder['status'],
-                  created_at: order.created_at,
-                  restaurant_tables: tableNum != null ? { table_number: tableNum } : null,
-                }
                 setOrders((prev) => {
-                  const exists = prev.find((o) => o.order_id === enriched.order_id)
-                  if (exists) return prev.map((o) => o.order_id === enriched.order_id ? enriched : o)
-                  return [...prev, enriched].sort(
-                    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-                  )
+                  const exists = prev.find((o) => o.order_id === order.order_id)
+                  if (exists) return prev.map((o) => o.order_id === order.order_id ? { ...o, ...order } : o)
+                  return [...prev, order].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
                 })
               } else {
                 setOrders((prev) => prev.filter((o) => o.order_id !== order.order_id))
@@ -139,34 +108,26 @@ export default function KitchenPage({
       )
       .subscribe()
 
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    return () => { supabase.removeChannel(channel) }
   }, [])
 
-  async function handleStart(orderId: number) {
+  async function updateStatus(orderId: number, status: 'preparing' | 'ready') {
+    setProcessingId(orderId) 
     try {
       const { error } = await supabase
         .from('orders')
-        .update({ status: 'preparing' })
+        .update({ status })
         .eq('order_id', orderId)
 
-      if (error) console.error('Error updating order:', error)
+      if (error) {
+        console.error('Error updating order:', error)
+        alert('Failed to update order. Please try again.') 
+      }
     } catch (err) {
       console.error('Error updating order:', err)
-    }
-  }
-
-  async function handleReady(orderId: number) {
-    try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: 'ready' })
-        .eq('order_id', orderId)
-
-      if (error) console.error('Error updating order:', error)
-    } catch (err) {
-      console.error('Error updating order:', err)
+      alert('An unexpected error occurred. Please try again.') 
+    } finally {
+      setProcessingId(null) 
     }
   }
 
@@ -202,7 +163,7 @@ export default function KitchenPage({
                 <div
                   key={order.order_id}
                   className={[
-                    'rounded-2xl shadow-sm p-4 w-full border-2 transition-colors',
+                    'bg-white rounded-2xl shadow-sm p-4 w-full border-2 transition-colors',
                     isPreparing ? 'border-emerald-300 bg-emerald-50' : 'border-rose-300 bg-rose-50',
                   ].join(' ')}
                 >
@@ -212,7 +173,7 @@ export default function KitchenPage({
                         Order #{order.order_id}
                       </p>
                       <p className="text-2xl font-bold text-neutral-900 mt-1">
-                        Table {order.restaurant_tables?.table_number ?? tableMapRef.current[order.table_id] ?? order.table_id}
+                        Table {tableMap[order.table_id] ?? order.table_id}
                       </p>
                     </div>
                     <p className="text-sm text-slate-500 whitespace-nowrap">
@@ -220,40 +181,28 @@ export default function KitchenPage({
                     </p>
                   </div>
 
-                  {order.items && (() => {
-                    const items = parseItems(order.items)
-                    if (!items.length) return null
-                    return (
-                      <div className="mb-4 p-3 bg-white rounded-lg border border-neutral-200">
-                        <ul className="space-y-1">
-                          {items.map((item, i) => (
-                            <li key={i} className="flex items-center justify-between text-sm">
-                              <span className="text-neutral-800">
-                                <span className="font-semibold">{item.quantity}×</span> {item.name}
-                              </span>
-                              <span className="text-neutral-400 ml-2 shrink-0">
-                                {(item.price * item.quantity).toFixed(2)}
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )
-                  })()}
+                  {order.items && (
+                    <div className="mb-4 p-3 bg-white rounded-lg border border-neutral-200">
+                      <p className="text-sm font-medium text-neutral-700">Items:</p>
+                      <p className="text-sm text-neutral-600 mt-1">{order.items}</p>
+                    </div>
+                  )}
 
                   {isPreparing ? (
                     <button
-                      onClick={() => handleReady(order.order_id)}
-                      className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors"
+                      onClick={() => updateStatus(order.order_id, 'ready')}
+                      disabled={processingId === order.order_id}
+                      className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Mark as Ready
+                      {processingId === order.order_id ? 'Marking...' : 'Mark as Ready'}
                     </button>
                   ) : (
                     <button
-                      onClick={() => handleStart(order.order_id)}
-                      className="mt-4 w-full h-11 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-sm font-semibold transition-colors"
+                      onClick={() => updateStatus(order.order_id, 'preparing')}
+                      disabled={processingId === order.order_id}
+                      className="mt-4 w-full h-11 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Start Preparing
+                      {processingId === order.order_id ? 'Starting...' : 'Start Preparing'}
                     </button>
                   )}
                 </div>

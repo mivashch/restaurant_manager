@@ -218,6 +218,18 @@ function mergeRoomIntoExisting(
   ]
 }
 
+function getNextTableNumber(tables: TableEl[]) {
+  const usedNumbers = new Set(tables.map(t => t.num))
+
+  let nextNumber = 1
+
+  while (usedNumbers.has(nextNumber)) {
+    nextNumber++
+  }
+
+  return nextNumber
+}
+
 function canPlace(pt: Pt, rooms: Room[], tables: TableEl[]) {
   const inRoom = rooms.some(r => !r.obstacle && pointInPoly(pt, r.vertices))
   const inObst = rooms.some(r => r.obstacle && pointInPoly(pt, r.vertices))
@@ -289,14 +301,13 @@ export default function FloorPlanEditor({
     }
 
     if (mode === 'place' && canPlace(p, rooms, tables)) {
-      const offset = tableNumOffset ?? 0
-      const maxNum = tables.length ? Math.max(...tables.map(t => t.num)) : offset
+      const nextNum = getNextTableNumber(tables)
 
       setTables(ts => [
         ...ts,
         {
           id: uid(),
-          num: maxNum + 1,
+          num: nextNum,
           x: p.x,
           y: p.y,
         },

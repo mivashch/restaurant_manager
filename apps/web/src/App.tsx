@@ -20,28 +20,100 @@ function AdminPage({ onBack }: { onBack: () => void }) {
   const [plan, setPlan] = useState<Plan | undefined>()
   const [planId, setPlanId] = useState<number | undefined>()
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/floor-plan')
-      .then(r => r.json())
+    fetch('/api/floor-plans')
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then(json => {
         if (json.data) {
           setPlanId(json.data.id)
           setPlan(json.data.data as Plan)
         }
       })
+      .catch(() => setError('Failed to load floor plans'))
       .finally(() => setLoading(false))
   }, [])
 
-  async function handleSave(data: Plan & { id?: number }) {
-    const res = await fetch('/api/floor-plan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: data.id, rooms: data.rooms, tables: data.tables }),
-    })
-    const json = await res.json()
-    if (json.data?.id) setPlanId(json.data.id)
+  function makeSaveHandler(floorNumber: number) {
+    return async (data: Plan & { id?: number }) => {
+      const floor = floors.find(f => f.floor_number === floorNumber)
+      try {
+        const res = await fetch('/api/floor-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: data.id,
+            floor_number: floorNumber,
+            name: floor?.name,
+            rooms: data.rooms,
+            tables: data.tables,
+          }),
+        })
+        const json = await res.json()
+        if (!res.ok || json.error || !json.data) {
+          alert(`Failed to save floor plan${json.error ? `: ${json.error}` : ''}`)
+          return
+        }
+        if (json.data?.id) {
+          setFloors(fs => fs.map(f =>
+            f.floor_number === floorNumber
+              ? { ...f, id: json.data.id, data: { rooms: data.rooms, tables: data.tables } }
+              : f
+          ))
+        }
+      } catch {
+        alert('Failed to save floor plan. Please try again.')
+      }
+    }
   }
+
+  function addFloor() {
+    const maxFloor = Math.max(...floors.map(f => f.floor_number), 0)
+    const n = maxFloor + 1
+    const newFloor: FloorData = {
+      floor_number: n,
+      name: `Floor ${n}`,
+      data: { rooms: [], tables: [] },
+    }
+    setFloors(fs => [...fs, newFloor])
+    setActiveFloor(n)
+  }
+
+  async function deleteFloor(floorNumber: number) {
+    const floor = floors.find(f => f.floor_number === floorNumber)
+    if (floor?.id) {
+      try {
+        const res = await fetch(`/api/floor-plan/${floor.id}`, { method: 'DELETE' })
+        const json = await res.json().catch(() => null)
+        if (!res.ok || json?.error) {
+          alert(`Failed to delete floor${json?.error ? `: ${json.error}` : ''}`)
+          return
+        }
+      } catch {
+        alert('Failed to delete floor. Please try again.')
+        return
+      }
+    }
+    const remaining = floors.filter(f => f.floor_number !== floorNumber)
+    setFloors(remaining)
+    if (activeFloor === floorNumber && remaining.length > 0) {
+      setActiveFloor(remaining[0].floor_number)
+    }
+  }
+
+  const currentFloor = floors.find(f => f.floor_number === activeFloor)
+
+  // Global max table num across all floors except the active one (for offset)
+  const tableNumOffset = Math.max(
+    0,
+    ...floors
+      .filter(f => f.floor_number !== activeFloor)
+      .flatMap(f => f.data.tables.map(t => t.num))
+  )
 
   return (
     <div className="min-h-screen bg-neutral-50 flex flex-col">
@@ -60,9 +132,17 @@ function AdminPage({ onBack }: { onBack: () => void }) {
         <h1 className="text-xl font-semibold text-neutral-800 mb-4">Floor plan</h1>
         {loading ? (
           <p className="text-sm text-neutral-400 animate-pulse">Loading…</p>
-        ) : (
-          <FloorPlanEditor initial={plan} planId={planId} onSave={handleSave} />
-        )}
+        ) : error ? (
+          <p className="text-sm text-red-500">{error}</p>
+        ) : currentFloor ? (
+          <FloorPlanEditor
+            key={activeFloor}
+            initial={currentFloor.data}
+            planId={currentFloor.id}
+            tableNumOffset={tableNumOffset}
+            onSave={makeSaveHandler(activeFloor)}
+          />
+        ) : null}
       </main>
     </div>
   )
@@ -89,7 +169,6 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
         setError(json.error ?? 'Login failed')
       } else {
         onLogin(json.data.user)
-        // onLogin({ ...json.data.user, roles: ['admin', 'waiter', 'kitchen', 'runner'] })
       }
     } catch {
       setError('Network error')
@@ -171,10 +250,6 @@ export default function App() {
     return <AdminPage onBack={() => setActiveRole(null)} />
   }
 
-  if (activeRole === 'runner' && user) {
-    return <RunnerPage user={user} onBack={() => setActiveRole(null)} />
-  }
-  
   if (activeRole === 'waiter' && user) {
     return <WaiterPage user={user} onBack={() => setActiveRole(null)} />
   }

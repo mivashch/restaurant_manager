@@ -3,6 +3,7 @@ import { usePersistedState } from '../lib/usePersistedState'
 import { supabase } from '../lib/supabase'
 import type { Plan, Room } from './FloorPlanEditor'
 import type { MenuItem } from './MenuEditor'
+import type { User } from '@restaurant-manager/shared'
 
 type WaiterTab = 'floor' | 'deliveries'
 type Status = 'available' | 'occupied' | 'reserved'
@@ -214,7 +215,11 @@ function BillModal({
 
       if (occupiedAt) query = query.gte('created_at', occupiedAt)
 
-      const { data } = await query
+      const { data, error: queryError } = await query
+      if (queryError) {
+        console.error('Error loading bill orders:', queryError)
+        alert('Failed to load orders for this table.')
+      }
       setOrders((data ?? []) as OrderRecord[])
       setLoading(false)
     }
@@ -311,10 +316,11 @@ function BillModal({
 }
 
 interface Props {
+  user: User
   onBack: () => void
 }
 
-export default function WaiterPage({ onBack }: Props) {
+export default function WaiterPage({ user, onBack }: Props) {
   const [waiterTab, setWaiterTab] = usePersistedState<WaiterTab>('rm_waiter_tab', 'floor')
   const [floors, setFloors] = useState<FloorData[]>([])
   const [activeFloor, setActiveFloor] = usePersistedState('rm_waiter_floor', 1)
@@ -418,8 +424,12 @@ export default function WaiterPage({ onBack }: Props) {
 
   useEffect(() => {
     fetch('/api/menu')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then(json => { if (json.data) setMenuItems(json.data) })
+      .catch(() => setError('Failed to load menu'))
 
     const channel = supabase
       .channel('menu-changes')
@@ -557,21 +567,29 @@ export default function WaiterPage({ onBack }: Props) {
     updateTableStatus(num, 'available')
   }
 
-  async function updateTableStatus(num: number, nextStatus: Status) {
+  async function updateTableStatus(num: number, nextStatus: Status): Promise<boolean> {
     const current = statuses[num] ?? 'available'
     setStatuses(prev => ({ ...prev, [num]: nextStatus }))
     setActionModalTable(null)
     setActionModalError(null)
 
-    const res = await fetch(`/api/tables/${num}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: nextStatus }),
-    })
+    try {
+      const res = await fetch(`/api/tables/${num}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus }),
+      })
 
-    if (!res.ok) {
+      if (!res.ok) {
+        setStatuses(prev => ({ ...prev, [num]: current }))
+        alert('Failed to update table status.')
+        return false
+      }
+      return true
+    } catch {
       setStatuses(prev => ({ ...prev, [num]: current }))
       alert('Failed to update table status.')
+      return false
     }
   }
 
@@ -601,14 +619,14 @@ export default function WaiterPage({ onBack }: Props) {
         return
       }
 
-      // Set occupied_at BEFORE inserting the order so the bill session filter works correctly
-      await updateTableStatus(orderModalTable, 'occupied')
+      const occupiedOk = await updateTableStatus(orderModalTable, 'occupied')
+      if (!occupiedOk) return
 
       const { error: insertError } = await supabase
         .from('orders')
         .insert({
           table_id: tableData.table_id,
-          waiter_id: 2,
+          waiter_id: Number(user.id),
           items: JSON.stringify(cart),
           status: 'new',
         })
@@ -631,9 +649,13 @@ export default function WaiterPage({ onBack }: Props) {
         .update({ status: 'served' })
         .eq('order_id', orderId)
 
-      if (err) console.error('Error updating order:', err)
+      if (err) {
+        console.error('Error updating order:', err)
+        alert('Failed to mark order as delivered. Please try again.')
+      }
     } catch (err) {
       console.error('Error updating order:', err)
+      alert('Failed to mark order as delivered. Please try again.')
     }
   }
 
@@ -1042,9 +1064,9 @@ export default function WaiterPage({ onBack }: Props) {
           tableNum={billModal.tableNum}
           tableId={billModal.tableId}
           onClose={() => setBillModal(null)}
-          onClearTable={() => {
-            updateTableStatus(billModal.tableNum, 'available')
-            setBillModal(null)
+          onClearTable={async () => {
+            const ok = await updateTableStatus(billModal.tableNum, 'available')
+            if (ok) setBillModal(null)
           }}
         />
       )}

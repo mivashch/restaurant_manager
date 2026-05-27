@@ -32,10 +32,14 @@ function AdminPage({ onBack }: { onBack: () => void }) {
   const [floors, setFloors] = useState<FloorData[]>([])
   const [activeFloor, setActiveFloor] = usePersistedState('rm_admin_floor', 1)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/floor-plans')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then(json => {
         if (json.data?.length) {
           const loaded: FloorData[] = json.data.map((f: { id: number; floor_number: number; name: string; data: Plan }) => ({
@@ -52,30 +56,39 @@ function AdminPage({ onBack }: { onBack: () => void }) {
           setActiveFloor(1)
         }
       })
+      .catch(() => setError('Failed to load floor plans'))
       .finally(() => setLoading(false))
   }, [])
 
   function makeSaveHandler(floorNumber: number) {
     return async (data: Plan & { id?: number }) => {
       const floor = floors.find(f => f.floor_number === floorNumber)
-      const res = await fetch('/api/floor-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: data.id,
-          floor_number: floorNumber,
-          name: floor?.name,
-          rooms: data.rooms,
-          tables: data.tables,
-        }),
-      })
-      const json = await res.json()
-      if (json.data?.id) {
-        setFloors(fs => fs.map(f =>
-          f.floor_number === floorNumber
-            ? { ...f, id: json.data.id, data: { rooms: data.rooms, tables: data.tables } }
-            : f
-        ))
+      try {
+        const res = await fetch('/api/floor-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: data.id,
+            floor_number: floorNumber,
+            name: floor?.name,
+            rooms: data.rooms,
+            tables: data.tables,
+          }),
+        })
+        const json = await res.json()
+        if (!res.ok || json.error || !json.data) {
+          alert(`Failed to save floor plan${json.error ? `: ${json.error}` : ''}`)
+          return
+        }
+        if (json.data?.id) {
+          setFloors(fs => fs.map(f =>
+            f.floor_number === floorNumber
+              ? { ...f, id: json.data.id, data: { rooms: data.rooms, tables: data.tables } }
+              : f
+          ))
+        }
+      } catch {
+        alert('Failed to save floor plan. Please try again.')
       }
     }
   }
@@ -95,7 +108,17 @@ function AdminPage({ onBack }: { onBack: () => void }) {
   async function deleteFloor(floorNumber: number) {
     const floor = floors.find(f => f.floor_number === floorNumber)
     if (floor?.id) {
-      await fetch(`/api/floor-plan/${floor.id}`, { method: 'DELETE' })
+      try {
+        const res = await fetch(`/api/floor-plan/${floor.id}`, { method: 'DELETE' })
+        const json = await res.json().catch(() => null)
+        if (!res.ok || json?.error) {
+          alert(`Failed to delete floor${json?.error ? `: ${json.error}` : ''}`)
+          return
+        }
+      } catch {
+        alert('Failed to delete floor. Please try again.')
+        return
+      }
     }
     const remaining = floors.filter(f => f.floor_number !== floorNumber)
     setFloors(remaining)
@@ -184,6 +207,8 @@ function AdminPage({ onBack }: { onBack: () => void }) {
 
         {loading ? (
           <p className="text-sm text-neutral-400 animate-pulse">Loading…</p>
+        ) : error ? (
+          <p className="text-sm text-red-500">{error}</p>
         ) : currentFloor ? (
           <FloorPlanEditor
             key={activeFloor}
@@ -337,8 +362,8 @@ export default function App() {
   }
 
 
-  if (activeRole === 'waiter') {
-    return <WaiterPage onBack={() => setActiveRole(null)} />
+  if (activeRole === 'waiter' && user) {
+    return <WaiterPage user={user} onBack={() => setActiveRole(null)} />
   }
   if (activeRole === 'kitchen' && user) {
     return <KitchenPage user={user} onBack={() => setActiveRole(null)} />

@@ -7,45 +7,40 @@ type DraftUser = { id?: number; username: string; role: string }
 const ROLES = ['admin', 'waiter', 'kitchen'] as const
 type Role = typeof ROLES[number]
 
-const ROLE_PREFIX: Record<Role, string> = {
-  admin: 'ADMIN',
-  waiter: 'WAITER',
-  kitchen: 'KITCHEN',
-}
-
 const ROLE_COLORS: Record<Role, string> = {
   admin: 'bg-purple-100 text-purple-700',
   waiter: 'bg-blue-100 text-blue-700',
   kitchen: 'bg-orange-100 text-orange-700',
 }
 
-function nextUsername(users: AppUser[], role: Role): string {
-  const prefix = ROLE_PREFIX[role]
-  const nums = users
-    .filter(u => u.role === role && u.username.startsWith(prefix + '-'))
-    .map(u => parseInt(u.username.slice(prefix.length + 1), 10))
-    .filter(n => !isNaN(n))
-  const max = nums.length ? Math.max(...nums) : 0
-  return `${prefix}-${String(max + 1).padStart(3, '0')}`
+async function fetchNextUsername(role: Role): Promise<string> {
+  const res = await fetch(`/api/users/next-username?role=${role}`)
+  const json = await res.json().catch(() => null)
+  if (!res.ok || !json?.data?.username) throw new Error(json?.error ?? 'Failed to allocate username')
+  return json.data.username as string
 }
 
 function UserModal({
   user,
-  users,
   onSave,
   onClose,
 }: {
   user: DraftUser
-  users: AppUser[]
   onSave: (u: DraftUser) => Promise<void>
   onClose: () => void
 }) {
   const [form, setForm] = useState<DraftUser>(user)
   const [saving, setSaving] = useState(false)
 
-  function handleRoleChange(role: string) {
+  async function handleRoleChange(role: string) {
     if (!form.id) {
-      setForm(f => ({ ...f, role, username: nextUsername(users, role as Role) }))
+      try {
+        const username = await fetchNextUsername(role as Role)
+        setForm(f => ({ ...f, role, username }))
+      } catch {
+        setForm(f => ({ ...f, role }))
+        alert('Failed to allocate username. Please enter manually.')
+      }
     } else {
       setForm(f => ({ ...f, role }))
     }
@@ -122,13 +117,18 @@ function UserModal({
 export default function UserManager() {
   const [users, setUsers] = useState<AppUser[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<DraftUser | null>(null)
   const [activeRole, setActiveRole] = usePersistedState<string>('rm_user_filter', 'All')
 
   useEffect(() => {
     fetch('/api/users')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
       .then(json => { if (json.data) setUsers(json.data) })
+      .catch(() => setError('Failed to load users'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -138,23 +138,52 @@ export default function UserManager() {
   async function saveUser(draft: DraftUser) {
     const method = draft.id ? 'PUT' : 'POST'
     const url = draft.id ? `/api/users/${draft.id}` : '/api/users'
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: draft.username, role: draft.role }),
-    })
-    const json = await res.json()
-    if (!json.data) return
-    setUsers(us =>
-      draft.id ? us.map(u => u.id === draft.id ? json.data : u) : [...us, json.data]
-    )
-    setEditing(null)
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: draft.username, role: draft.role }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.data) {
+        alert(`Failed to save user${json?.error ? `: ${json.error}` : ''}`)
+        return
+      }
+      setUsers(us =>
+        draft.id ? us.map(u => u.id === draft.id ? json.data : u) : [...us, json.data]
+      )
+      setEditing(null)
+    } catch {
+      alert('Failed to save user. Please try again.')
+    }
   }
 
   async function deleteUser(id: number) {
     if (!confirm('Delete this user? They will no longer be able to log in.')) return
-    await fetch(`/api/users/${id}`, { method: 'DELETE' })
-    setUsers(us => us.filter(u => u.id !== id))
+    try {
+      const res = await fetch(`/api/users/${id}`, { method: 'DELETE' })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || json?.error) {
+        alert(`Failed to delete user${json?.error ? `: ${json.error}` : ''}`)
+        return
+      }
+      setUsers(us => us.filter(u => u.id !== id))
+    } catch {
+      alert('Failed to delete user. Please try again.')
+    }
+  }
+
+  async function handleAddUser() {
+    const initialRole: Role = (ROLES as readonly string[]).includes(activeRole)
+      ? (activeRole as Role)
+      : 'waiter'
+    try {
+      const username = await fetchNextUsername(initialRole)
+      setEditing({ username, role: initialRole })
+    } catch {
+      setEditing({ username: '', role: initialRole })
+      alert('Failed to allocate username. Please enter manually.')
+    }
   }
 
   return (
@@ -180,7 +209,7 @@ export default function UserManager() {
           ))}
         </div>
         <button
-          onClick={() => setEditing({ username: nextUsername(users, 'waiter'), role: 'waiter' })}
+          onClick={handleAddUser}
           className="px-4 py-2 text-sm font-medium rounded-lg bg-neutral-800 text-white hover:bg-neutral-700 transition shrink-0"
         >
           + Add user
@@ -190,6 +219,8 @@ export default function UserManager() {
       {/* Table */}
       {loading ? (
         <p className="text-sm text-neutral-400 animate-pulse">Loading…</p>
+      ) : error ? (
+        <p className="text-sm text-red-500">{error}</p>
       ) : visible.length === 0 ? (
         <p className="text-sm text-neutral-400">No users yet.</p>
       ) : (
@@ -243,7 +274,6 @@ export default function UserManager() {
       {editing && (
         <UserModal
           user={editing}
-          users={users}
           onSave={saveUser}
           onClose={() => setEditing(null)}
         />

@@ -101,6 +101,50 @@ app.get('/floor-plan', async (c) => {
   return c.json({ data, error: null })
 })
 
+async function syncTablesForFloor(prevTableNums: number[], tables: Array<{ num: number }>): Promise<string | null> {
+  const tableNums = tables?.map((t) => t.num) ?? []
+
+  const toDelete = prevTableNums.filter(n => !tableNums.includes(n))
+  if (toDelete.length) {
+    const { error } = await supabase.from('restaurant_tables').delete().in('table_number', toDelete)
+    if (error) return error.message
+  }
+
+  const toInsert = tableNums.filter(n => !prevTableNums.includes(n))
+  if (toInsert.length) {
+    const { error } = await supabase.from('restaurant_tables').upsert(
+      toInsert.map(num => ({ table_number: num, status: 'available' })),
+      { onConflict: 'table_number' },
+    )
+    if (error) return error.message
+  }
+
+  return null
+}
+
+async function cleanupOrphanTables(): Promise<string | null> {
+  const { data: allFloors, error: readError } = await supabase.from('floor_plans').select('data')
+  if (readError) return readError.message
+
+  const validNums = new Set(
+    (allFloors ?? []).flatMap(f =>
+      ((f.data as { tables?: Array<{ num: number }> })?.tables ?? []).map(t => t.num)
+    )
+  )
+
+  if (validNums.size === 0) {
+    const { error } = await supabase.from('restaurant_tables').delete().neq('table_number', 0)
+    return error?.message ?? null
+  }
+
+  const nums = [...validNums]
+  const { error } = await supabase
+    .from('restaurant_tables')
+    .delete()
+    .not('table_number', 'in', `(${nums.join(',')})`)
+  return error?.message ?? null
+}
+
 app.post('/floor-plan', async (c) => {
   const body = await c.req.json<{
     id?: number
@@ -113,8 +157,8 @@ app.post('/floor-plan', async (c) => {
   const { id, floor_number = 1, name, rooms, tables } = body
   const now = new Date().toISOString()
 
-  // Read the floor's current table list BEFORE saving so we can diff it
   let prevTableNums: number[] = []
+  let prevPlanData: unknown = null
   if (id) {
     const { data: prev } = await supabase
       .from('floor_plans')
@@ -122,6 +166,7 @@ app.post('/floor-plan', async (c) => {
       .eq('id', id)
       .single()
     prevTableNums = (prev?.data as { tables?: Array<{ num: number }> })?.tables?.map(t => t.num) ?? []
+    prevPlanData = prev?.data ?? null
   }
 
   let result: { data: unknown; error: { message: string } | null }
@@ -143,43 +188,25 @@ app.post('/floor-plan', async (c) => {
     result = { data, error }
   }
 
-  if (!result.error) {
-    const tableNums = tables?.map((t) => t.num) ?? []
-
-    // Remove only tables that were on THIS floor before and are no longer in the new plan
-    const toDelete = prevTableNums.filter(n => !tableNums.includes(n))
-    if (toDelete.length) {
-      await supabase.from('restaurant_tables').delete().in('table_number', toDelete)
-    }
-
-    // Insert tables new to this floor — always force status: 'available' to clear any stale entries
-    const toInsert = tableNums.filter(n => !prevTableNums.includes(n))
-    if (toInsert.length) {
-      await supabase.from('restaurant_tables').upsert(
-        toInsert.map(num => ({ table_number: num, status: 'available' })),
-        { onConflict: 'table_number' },
-      )
-    }
+  if (result.error) {
+    return c.json({ data: null, error: result.error.message }, 500)
   }
 
-  // Remove any restaurant_tables entries not referenced by any floor plan (cross-floor orphan cleanup)
-  if (!result.error) {
-    const { data: allFloors } = await supabase.from('floor_plans').select('data')
-    const validNums = new Set(
-      (allFloors ?? []).flatMap(f =>
-        ((f.data as { tables?: Array<{ num: number }> })?.tables ?? []).map(t => t.num)
-      )
-    )
-    if (validNums.size > 0) {
-      const nums = [...validNums]
-      await supabase
-        .from('restaurant_tables')
-        .delete()
-        .not('table_number', 'in', `(${nums.join(',')})`)
+  const syncErr = await syncTablesForFloor(prevTableNums, tables)
+  if (syncErr) {
+    if (id && prevPlanData != null) {
+      await supabase.from('floor_plans').update({ data: prevPlanData }).eq('id', id)
+    } else if (!id) {
+      const insertedId = (result.data as { id?: number } | null)?.id
+      if (insertedId) await supabase.from('floor_plans').delete().eq('id', insertedId)
     }
+    return c.json({ data: null, error: syncErr }, 500)
   }
 
-  return c.json({ data: result.data, error: result.error?.message ?? null })
+  const orphanErr = await cleanupOrphanTables()
+  if (orphanErr) return c.json({ data: result.data, error: orphanErr }, 500)
+
+  return c.json({ data: result.data, error: null })
 })
 
 // Remove restaurant_tables entries that are no longer referenced by any floor plan
@@ -208,21 +235,13 @@ app.delete('/floor-plan/:id', async (c) => {
   const id = Number(c.req.param('id'))
   if (!id) return c.json({ data: null, error: 'Invalid id' }, 400)
 
-  const { data: plan } = await supabase
-    .from('floor_plans')
-    .select('data')
-    .eq('id', id)
-    .single()
+  const { error: deleteError } = await supabase.from('floor_plans').delete().eq('id', id)
+  if (deleteError) return c.json({ data: null, error: deleteError.message }, 500)
 
-  if (plan) {
-    const tableNums = (plan.data as { tables: Array<{ num: number }> })?.tables?.map((t) => t.num) ?? []
-    if (tableNums.length) {
-      await supabase.from('restaurant_tables').delete().in('table_number', tableNums)
-    }
-  }
+  const orphanErr = await cleanupOrphanTables()
+  if (orphanErr) return c.json({ data: null, error: orphanErr }, 500)
 
-  const { error } = await supabase.from('floor_plans').delete().eq('id', id)
-  return c.json({ data: null, error: error?.message ?? null })
+  return c.json({ data: null, error: null })
 })
 
 app.patch('/tables/:num/status', async (c) => {
@@ -471,6 +490,12 @@ function mapUser(r: DbUser) {
   return { id: r.user_id, username: r.username, role: r.roles?.name ?? '' }
 }
 
+const ROLE_PREFIX: Record<string, string> = {
+  admin: 'ADMIN',
+  waiter: 'WAITER',
+  kitchen: 'KITCHEN',
+}
+
 app.get('/users', async (c) => {
   const { data, error } = await supabase
     .from('users')
@@ -480,6 +505,26 @@ app.get('/users', async (c) => {
 
   if (error) return c.json({ data: null, error: error.message }, 500)
   return c.json({ data: (data ?? []).map(r => mapUser(r as unknown as DbUser)), error: null })
+})
+
+app.get('/users/next-username', async (c) => {
+  const role = c.req.query('role') ?? ''
+  const prefix = ROLE_PREFIX[role]
+  if (!prefix) return c.json({ data: null, error: 'Invalid role' }, 400)
+
+  const { data, error } = await supabase
+    .from('users')
+    .select('username')
+    .ilike('username', `${prefix}-%`)
+
+  if (error) return c.json({ data: null, error: error.message }, 500)
+
+  const nums = (data ?? [])
+    .map(u => parseInt(u.username.slice(prefix.length + 1), 10))
+    .filter(n => !isNaN(n))
+  const max = nums.length ? Math.max(...nums) : 0
+  const username = `${prefix}-${String(max + 1).padStart(3, '0')}`
+  return c.json({ data: { username }, error: null })
 })
 
 app.post('/users', async (c) => {
@@ -493,9 +538,11 @@ app.post('/users', async (c) => {
 
   if (roleError || !roleData) return c.json({ data: null, error: 'Invalid role' }, 400)
 
+  const placeholderHash = `placeholder:${crypto.randomUUID()}`
+
   const { data, error } = await supabase
     .from('users')
-    .insert({ username: body.username.trim(), password_hash: '', role_id: roleData.role_id })
+    .insert({ username: body.username.trim(), password_hash: placeholderHash, role_id: roleData.role_id })
     .select('user_id, username, roles(name)')
     .single()
 

@@ -198,15 +198,24 @@ function ItemModal({
 export default function MenuEditor() {
   const [items, setItems] = useState<MenuItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState<DraftItem | null>(null)
   const [activeCategory, setActiveCategory] = usePersistedState('rm_menu_category', 'All')
 
-  useEffect(() => {
-    fetch('/api/menu')
-      .then(r => r.json())
-      .then(json => { if (json.data) setItems(json.data) })
-      .finally(() => setLoading(false))
-  }, [])
+  async function reloadItems() {
+    try {
+      const r = await fetch('/api/menu')
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      const json = await r.json()
+      if (json.data) setItems(json.data)
+    } catch {
+      setError('Failed to load menu')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { reloadItems() }, [])
 
   const categoryList = Array.from(new Set(items.map(i => i.category)))
   const categories = ['All', ...categoryList]
@@ -215,40 +224,77 @@ export default function MenuEditor() {
   async function deleteCategory(cat: string) {
     const affected = items.filter(i => i.category === cat)
     if (affected.length > 0 && !confirm(`Delete category "${cat}" and all ${affected.length} item(s) in it?`)) return
-    await Promise.all(affected.map(i => fetch(`/api/menu/${i.id}`, { method: 'DELETE' })))
-    setItems(is => is.filter(i => i.category !== cat))
-    if (activeCategory === cat) setActiveCategory('All')
+
+    const results = await Promise.all(
+      affected.map(i =>
+        fetch(`/api/menu/${i.id}`, { method: 'DELETE' })
+          .then(r => ({ id: i.id, ok: r.ok }))
+          .catch(() => ({ id: i.id, ok: false }))
+      )
+    )
+    const failed = results.filter(r => !r.ok)
+
+    if (failed.length === 0) {
+      setItems(is => is.filter(i => i.category !== cat))
+      if (activeCategory === cat) setActiveCategory('All')
+    } else {
+      alert(`Failed to delete ${failed.length} item(s) in "${cat}". Refreshing menu…`)
+      await reloadItems()
+    }
   }
 
   async function saveItem(draft: DraftItem) {
     const method = draft.id ? 'PUT' : 'POST'
     const url = draft.id ? `/api/menu/${draft.id}` : '/api/menu'
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(draft),
-    })
-    const json = await res.json()
-    if (!json.data) return
-    setItems(is =>
-      draft.id ? is.map(i => i.id === draft.id ? json.data : i) : [...is, json.data]
-    )
-    setEditing(null)
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(draft),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.data) {
+        alert(`Failed to save item${json?.error ? `: ${json.error}` : ''}`)
+        return
+      }
+      setItems(is =>
+        draft.id ? is.map(i => i.id === draft.id ? json.data : i) : [...is, json.data]
+      )
+      setEditing(null)
+    } catch {
+      alert('Failed to save item. Please try again.')
+    }
   }
 
   async function deleteItem(id: number) {
-    await fetch(`/api/menu/${id}`, { method: 'DELETE' })
-    setItems(is => is.filter(i => i.id !== id))
+    try {
+      const res = await fetch(`/api/menu/${id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        alert('Failed to delete item.')
+        return
+      }
+      setItems(is => is.filter(i => i.id !== id))
+    } catch {
+      alert('Failed to delete item. Please try again.')
+    }
   }
 
   async function toggleAvailable(item: MenuItem) {
-    const res = await fetch(`/api/menu/${item.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ available: !item.available }),
-    })
-    const json = await res.json()
-    if (json.data) setItems(is => is.map(i => i.id === item.id ? json.data : i))
+    try {
+      const res = await fetch(`/api/menu/${item.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ available: !item.available }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.data) {
+        alert('Failed to update availability.')
+        return
+      }
+      setItems(is => is.map(i => i.id === item.id ? json.data : i))
+    } catch {
+      alert('Failed to update availability.')
+    }
   }
 
   return (
@@ -291,6 +337,8 @@ export default function MenuEditor() {
       {/* Table */}
       {loading ? (
         <p className="text-sm text-neutral-400 animate-pulse">Loading…</p>
+      ) : error ? (
+        <p className="text-sm text-red-500">{error}</p>
       ) : visible.length === 0 ? (
         <p className="text-sm text-neutral-400">No items yet. Click "Add item" to start.</p>
       ) : (

@@ -8,7 +8,7 @@ import WaiterPage from './components/WaiterPage'
 import KitchenPage from './components/KitchenPage'
 
 
-const ROLE_LABELS: Record<Role, string> = {
+const ROLE_LABELS: Partial<Record<Role, string>> = {
   admin: 'Admin',
   waiter: 'Waiter',
   kitchen: 'Kitchen',

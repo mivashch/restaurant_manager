@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/main.tsx"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/components/floorplaneditor.tsx","./src/components/kitchenpage.tsx","./src/components/menueditor.tsx","./src/components/runnerpage.tsx","./src/components/usermanager.tsx","./src/components/waiterpage.tsx","./src/lib/supabase.ts","./src/lib/usepersistedstate.ts"],"errors":true,"version":"5.9.3"}

@@ -271,43 +271,23 @@ app.patch('/tables/:num/status', async (c) => {
   return c.json({ data, error: error?.message ?? null })
 })
 
-app.post('/orders/mock', (c) => {
-  const dishes = [
-    '2x Margherita Pizza\n1x Caesar Salad',
-    '1x Beef Burger\n2x French Fries\n1x Cola',
-    '3x Spaghetti Carbonara',
-    '1x Grilled Salmon\n1x Lemonade',
-    '2x Chicken Wings\n1x Beer',
-  ]
-  const tableNum = Math.ceil(Math.random() * 5)
-  const item_name = dishes[Math.floor(Math.random() * dishes.length)]
-  const newOrder: MockOrder = {
-    order_id: Date.now(),
-    status: 'new',
-    created_at: new Date().toISOString(),
-    restaurant_tables: { table_number: tableNum },
-    item_name,
-    quantity: 1,
-    ordered_by: 'Waiter',
-  }
-  mockOrders.push(newOrder)
-  return c.json({ data: newOrder, error: null })
-})
+
+const ORDER_SELECT = `
+  order_id,
+  table_id,
+  waiter_id,
+  status,
+  created_at,
+  items,
+  restaurant_tables (
+    table_number
+  )
+`
 
 app.get('/orders/kitchen', async (c) => {
   const { data, error } = await supabase
     .from('orders')
-    .select(`
-      order_id,
-      table_id,
-      waiter_id,
-      status,
-      created_at,
-      items,
-      restaurant_tables (
-        table_number
-      )
-    `)
+    .select(ORDER_SELECT)
     .in('status', ['new', 'preparing'])
     .order('created_at', { ascending: true })
 
@@ -318,38 +298,55 @@ app.get('/orders/kitchen', async (c) => {
   return c.json({ data: data ?? [], error: null })
 })
 
-app.patch('/orders/:id/start', (c) => {
+app.patch('/orders/:id/start', async (c) => {
   const orderId = Number(c.req.param('id'))
 
   if (!orderId) {
     return c.json({ data: null, error: 'Invalid order id' }, 400)
   }
 
-  const order = mockOrders.find((o) => o.order_id === orderId)
+  const { data: order, error: findError } = await supabase
+    .from('orders')
+    .select('order_id, status')
+    .eq('order_id', orderId)
+    .single()
 
-  if (!order) {
+  if (findError || !order) {
     return c.json({ data: null, error: 'Order not found' }, 404)
   }
 
-  if (!['open', 'new'].includes(order.status)) {
+  if (!['new'].includes(order.status)) {
     return c.json({ data: null, error: 'Order cannot be started' }, 400)
   }
 
-  order.status = 'preparing'
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'preparing' })
+    .eq('order_id', orderId)
+    .select(ORDER_SELECT)
+    .single()
 
-  return c.json({ data: order, error: null })
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
 })
 
-app.patch('/orders/:id/ready', (c) => {
+app.patch('/orders/:id/ready', async (c) => {
   const orderId = Number(c.req.param('id'))
 
   if (!orderId) {
     return c.json({ data: null, error: 'Invalid order id' }, 400)
   }
 
-  const order = mockOrders.find((o) => o.order_id === orderId)
+  const { data: order, error: findError } = await supabase
+    .from('orders')
+    .select('order_id, status')
+    .eq('order_id', orderId)
+    .single()
 
-  if (!order) {
+  if (findError || !order) {
     return c.json({ data: null, error: 'Order not found' }, 404)
   }
 
@@ -357,15 +354,32 @@ app.patch('/orders/:id/ready', (c) => {
     return c.json({ data: null, error: 'Order is not preparing' }, 400)
   }
 
-  order.status = 'ready'
-  order.prepared_by = 'Kitchen'
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'ready' })
+    .eq('order_id', orderId)
+    .select(ORDER_SELECT)
+    .single()
 
-  return c.json({ data: order, error: null })
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
 })
 
-app.get('/orders/runner', (c) => {
-  const data = mockOrders.filter((order) => order.status === 'ready')
-  return c.json({ data, error: null })
+app.get('/orders/runner', async (c) => {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(ORDER_SELECT)
+    .eq('status', 'ready')
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data: data ?? [], error: null })
 })
 
 app.patch('/orders/:id/take', async (c) => {
@@ -375,9 +389,13 @@ app.patch('/orders/:id/take', async (c) => {
     return c.json({ data: null, error: 'Invalid order id' }, 400)
   }
 
-  const order = mockOrders.find((o) => o.order_id === orderId)
+  const { data: order, error: findError } = await supabase
+    .from('orders')
+    .select('order_id, status')
+    .eq('order_id', orderId)
+    .single()
 
-  if (!order) {
+  if (findError || !order) {
     return c.json({ data: null, error: 'Order not found' }, 404)
   }
 
@@ -385,9 +403,18 @@ app.patch('/orders/:id/take', async (c) => {
     return c.json({ data: null, error: 'Order is not ready' }, 400)
   }
 
-  order.status = 'served'
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'served' })
+    .eq('order_id', orderId)
+    .select(ORDER_SELECT)
+    .single()
 
-  return c.json({ data: order, error: null })
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
 })
 
 // ── Menu ──────────────────────────────────────────────────────────────────────

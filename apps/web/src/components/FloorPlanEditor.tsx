@@ -284,7 +284,6 @@ export default function FloorPlanEditor({
       try {
         const res = await fetch('/api/tables/locked')
         const json = await res.json()
-        console.log('locked tables:', json.data)
 
         if (!res.ok) {
           throw new Error(json.error || 'Failed to load locked tables')
@@ -354,7 +353,7 @@ export default function FloorPlanEditor({
       )
 
       if (hasLockedTable) {
-        setError('This room contains tables with active orders and cannot be deleted.')
+        setError('Only available tables can be deleted.')
         return
       }
     }
@@ -371,14 +370,6 @@ export default function FloorPlanEditor({
   }
 
 
-  function renumberTables(tables: TableEl[]) {
-    return tables
-      .sort((a, b) => a.num - b.num)
-      .map((table, index) => ({
-        ...table,
-        num: index + 1,
-      }))
-  }
 
   function eraseTable(id: string, e: React.MouseEvent) {
     e.stopPropagation()
@@ -387,9 +378,11 @@ export default function FloorPlanEditor({
     if (!table) return
 
     if (lockedTableNumbers.includes(table.num)) {
-      setError('This table has active orders and cannot be deleted.')
+      setError('Only available tables can be deleted.')
       return
     }
+
+    const removed = table
 
     setTables(ts => ts.filter(t => t.id !== id))
   }
@@ -398,12 +391,7 @@ export default function FloorPlanEditor({
     setSaving(true)
 
     try {
-      const renumberedTables = renumberTables(tables)
-
-      setTables(renumberedTables)
-
-      await onSave({ rooms, tables: renumberedTables, id: planId })
-
+      await onSave({ rooms, tables, id: planId })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {

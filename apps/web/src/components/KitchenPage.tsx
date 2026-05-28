@@ -1,13 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import type { User } from '@restaurant-manager/shared'
 
+type OrderStatus = 'open' | 'new' | 'preparing' | 'ready' | 'served'
+
 type KitchenOrder = {
   order_id: number
-  table_id: number
-  items: string | null
-  status: 'new' | 'preparing' | 'ready' | 'served'
+  table_id?: number | null
+  items?: string | null
+  status: OrderStatus
   created_at: string
+  item_name?: string | null
+  quantity?: number | null
+  ordered_by?: string | null
+  restaurant_tables?: {
+    table_number?: number | null
+  } | null
 }
 
 function formatTime(value: string) {
@@ -15,6 +23,34 @@ function formatTime(value: string) {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function formatItems(order: KitchenOrder) {
+  if (order.item_name) {
+    return `${order.item_name}${order.quantity ? ` × ${order.quantity}` : ''}`
+  }
+
+  if (!order.items) {
+    return 'No items'
+  }
+
+  try {
+    const parsed = JSON.parse(order.items)
+
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((item) => {
+          const name = item.name ?? item.item_name ?? item.title ?? 'Item'
+          const quantity = item.quantity ?? item.qty ?? 1
+          return `${name} × ${quantity}`
+        })
+        .join('\n')
+    }
+
+    return typeof parsed === 'string' ? parsed : JSON.stringify(parsed)
+  } catch {
+    return order.items
+  }
 }
 
 export default function KitchenPage({
@@ -27,92 +63,83 @@ export default function KitchenPage({
   const [orders, setOrders] = useState<KitchenOrder[]>([])
   const [tableMap, setTableMap] = useState<Record<number, number>>({})
   const [loading, setLoading] = useState(true)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [processingId, setProcessingId] = useState<number | null>(null)
+
+  const loadOrders = useCallback(async (showLoader = false) => {
+    if (showLoader) {
+      setLoading(true)
+    }
+
+    setErrorMessage(null)
+
+    try {
+      const response = await fetch('/api/orders/kitchen')
+      const result = await response.json()
+
+      console.log('KITCHEN API RESPONSE:', result)
+
+      if (!response.ok || result.error) {
+        throw new Error(result.error ?? 'Failed to load kitchen orders')
+      }
+
+      setOrders((result.data ?? []) as KitchenOrder[])
+    } catch (err) {
+      console.error('Failed to load kitchen orders:', err)
+      setOrders([])
+      setErrorMessage(
+        err instanceof Error ? err.message : 'Failed to load kitchen orders',
+      )
+    } finally {
+        if (showLoader) {
+          setLoading(false)
+        }
+    }
+  }, [])
 
   useEffect(() => {
     async function loadTableMap() {
       try {
-        const { data, error } = await supabase.from('restaurant_tables').select('table_id, table_number')
+        const { data, error } = await supabase
+          .from('restaurant_tables')
+          .select('table_id, table_number')
+
         if (error) throw error
-        if (data) {
-          const map: Record<number, number> = {}
-          data.forEach(t => { map[t.table_id] = t.table_number })
-          setTableMap(map)
-        }
+
+        const map: Record<number, number> = {}
+
+        data?.forEach((table) => {
+          map[table.table_id] = table.table_number
+        })
+
+        setTableMap(map)
       } catch (err) {
         console.error('Failed to load table map:', err)
       }
     }
-    
-    async function loadOrders() {
-      try {
-        const { data, error } = await supabase
-          .from('orders')
-          .select('*')
-          .in('status', ['new', 'preparing'])
-          .order('created_at', { ascending: true })
-
-        if (error) {
-          console.error('Error loading orders:', error)
-          alert('Failed to load kitchen orders. Please refresh.')
-          return
-        }
-
-        setOrders(data as KitchenOrder[])
-      } catch (err) {
-        console.error('Error loading orders:', err)
-        alert('Failed to load kitchen orders. Please refresh.')
-      } finally {
-        setLoading(false)
-      }
-    }
 
     loadTableMap()
-    loadOrders()
+    loadOrders(true)
 
     const channel = supabase
       .channel('kitchen-orders')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders' },
-        (payload) => {
-          const order = payload.new as KitchenOrder | null
-          const oldOrder = payload.old as KitchenOrder | null
-
-          if (payload.eventType === 'INSERT') {
-            if (order && (order.status === 'new' || order.status === 'preparing')) {
-              setOrders((prev) => {
-                const exists = prev.find((o) => o.order_id === order.order_id)
-                if (exists) return prev
-                return [...prev, order].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-              })
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            if (order) {
-              if (order.status === 'new' || order.status === 'preparing') {
-                setOrders((prev) => {
-                  const exists = prev.find((o) => o.order_id === order.order_id)
-                  if (exists) return prev.map((o) => o.order_id === order.order_id ? { ...o, ...order } : o)
-                  return [...prev, order].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-                })
-              } else {
-                setOrders((prev) => prev.filter((o) => o.order_id !== order.order_id))
-              }
-            }
-          } else if (payload.eventType === 'DELETE') {
-            if (oldOrder) {
-              setOrders((prev) => prev.filter((o) => o.order_id !== oldOrder.order_id))
-            }
-          }
-        }
+        () => {
+          loadOrders()
+        },
       )
       .subscribe()
 
-    return () => { supabase.removeChannel(channel) }
-  }, [])
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [loadOrders])
 
   async function updateStatus(orderId: number, status: 'preparing' | 'ready') {
-    setProcessingId(orderId) 
+    setProcessingId(orderId)
+
     try {
       const { error } = await supabase
         .from('orders')
@@ -120,15 +147,36 @@ export default function KitchenPage({
         .eq('order_id', orderId)
 
       if (error) {
-        console.error('Error updating order:', error)
-        alert('Failed to update order. Please try again.') 
+        throw error
+      }
+
+      if (status === 'ready') {
+        setOrders((prev) => prev.filter((order) => order.order_id !== orderId))
+      } else {
+        setOrders((prev) =>
+          prev.map((order) =>
+            order.order_id === orderId ? { ...order, status } : order,
+          ),
+        )
       }
     } catch (err) {
       console.error('Error updating order:', err)
-      alert('An unexpected error occurred. Please try again.') 
+      alert('Failed to update order. Please try again.')
     } finally {
-      setProcessingId(null) 
+      setProcessingId(null)
     }
+  }
+
+  function getTableNumber(order: KitchenOrder) {
+    if (order.restaurant_tables?.table_number != null) {
+      return order.restaurant_tables.table_number
+    }
+
+    if (order.table_id != null) {
+      return tableMap[order.table_id] ?? order.table_id
+    }
+
+    return '—'
   }
 
   return (
@@ -152,8 +200,12 @@ export default function KitchenPage({
 
         {loading ? (
           <p className="text-sm text-neutral-400">Loading…</p>
+        ) : errorMessage ? (
+          <p className="text-sm text-red-500">{errorMessage}</p>
         ) : orders.length === 0 ? (
-          <p className="text-sm text-neutral-400">No orders in kitchen queue.</p>
+          <p className="text-sm text-neutral-400">
+            No orders in kitchen queue.
+          </p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {orders.map((order) => {
@@ -164,7 +216,9 @@ export default function KitchenPage({
                   key={order.order_id}
                   className={[
                     'bg-white rounded-2xl shadow-sm p-4 w-full border-2 transition-colors',
-                    isPreparing ? 'border-emerald-300 bg-emerald-50' : 'border-rose-300 bg-rose-50',
+                    isPreparing
+                      ? 'border-emerald-300 bg-emerald-50'
+                      : 'border-rose-300 bg-rose-50',
                   ].join(' ')}
                 >
                   <div className="flex items-start justify-between gap-4 mb-3">
@@ -173,19 +227,31 @@ export default function KitchenPage({
                         Order #{order.order_id}
                       </p>
                       <p className="text-2xl font-bold text-neutral-900 mt-1">
-                        Table {tableMap[order.table_id] ?? order.table_id}
+                        Table {getTableNumber(order)}
+                      </p>
+                      <p className="text-xs uppercase text-neutral-400 mt-1">
+                        Status: {order.status}
                       </p>
                     </div>
+
                     <p className="text-sm text-slate-500 whitespace-nowrap">
                       {formatTime(order.created_at)}
                     </p>
                   </div>
 
-                  {order.items && (
-                    <div className="mb-4 p-3 bg-white rounded-lg border border-neutral-200">
-                      <p className="text-sm font-medium text-neutral-700">Items:</p>
-                      <p className="text-sm text-neutral-600 mt-1">{order.items}</p>
-                    </div>
+                  <div className="mb-4 p-3 bg-white rounded-lg border border-neutral-200">
+                    <p className="text-sm font-medium text-neutral-700">
+                      Items:
+                    </p>
+                    <pre className="text-sm text-neutral-600 mt-1 whitespace-pre-wrap font-sans">
+                      {formatItems(order)}
+                    </pre>
+                  </div>
+
+                  {order.ordered_by && (
+                    <p className="text-xs text-neutral-500 mb-3">
+                      Ordered by: {order.ordered_by}
+                    </p>
                   )}
 
                   {isPreparing ? (
@@ -194,7 +260,9 @@ export default function KitchenPage({
                       disabled={processingId === order.order_id}
                       className="mt-4 w-full h-11 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {processingId === order.order_id ? 'Marking...' : 'Mark as Ready'}
+                      {processingId === order.order_id
+                        ? 'Marking...'
+                        : 'Mark as Ready'}
                     </button>
                   ) : (
                     <button
@@ -202,7 +270,9 @@ export default function KitchenPage({
                       disabled={processingId === order.order_id}
                       className="mt-4 w-full h-11 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-sm font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {processingId === order.order_id ? 'Starting...' : 'Start Preparing'}
+                      {processingId === order.order_id
+                        ? 'Starting...'
+                        : 'Start Preparing'}
                     </button>
                   )}
                 </div>

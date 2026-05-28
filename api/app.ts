@@ -104,45 +104,24 @@ app.get('/floor-plan', async (c) => {
 async function syncTablesForFloor(prevTableNums: number[], tables: Array<{ num: number }>): Promise<string | null> {
   const tableNums = tables?.map((t) => t.num) ?? []
 
-  const toDelete = prevTableNums.filter(n => !tableNums.includes(n))
-  if (toDelete.length) {
-    const { error } = await supabase.from('restaurant_tables').delete().in('table_number', toDelete)
-    if (error) return error.message
-  }
-
   const toInsert = tableNums.filter(n => !prevTableNums.includes(n))
+
   if (toInsert.length) {
     const { error } = await supabase.from('restaurant_tables').upsert(
       toInsert.map(num => ({ table_number: num, status: 'available' })),
       { onConflict: 'table_number' },
     )
+
     if (error) return error.message
   }
 
   return null
 }
-
 async function cleanupOrphanTables(): Promise<string | null> {
-  const { data: allFloors, error: readError } = await supabase.from('floor_plans').select('data')
-  if (readError) return readError.message
-
-  const validNums = new Set(
-    (allFloors ?? []).flatMap(f =>
-      ((f.data as { tables?: Array<{ num: number }> })?.tables ?? []).map(t => t.num)
-    )
-  )
-
-  if (validNums.size === 0) {
-    const { error } = await supabase.from('restaurant_tables').delete().neq('table_number', 0)
-    return error?.message ?? null
-  }
-
-  const nums = [...validNums]
-  const { error } = await supabase
-    .from('restaurant_tables')
-    .delete()
-    .not('table_number', 'in', `(${nums.join(',')})`)
-  return error?.message ?? null
+  // Do not physically delete restaurant_tables here.
+  // Floor plan editing only removes tables from the visual plan.
+  // The database rows may still be referenced by orders, so deleting them here can break saves.
+  return null
 }
 
 app.post('/floor-plan', async (c) => {
@@ -228,23 +207,7 @@ app.get('/tables/locked', async c => {
 
 // Remove restaurant_tables entries that are no longer referenced by any floor plan
 app.post('/tables/cleanup', async (c) => {
-  const { data: floors } = await supabase.from('floor_plans').select('data')
-  const validNums = new Set(
-    (floors ?? []).flatMap(f =>
-      ((f.data as { tables?: Array<{ num: number }> })?.tables ?? []).map(t => t.num)
-    )
-  )
-
-  if (validNums.size === 0) {
-    await supabase.from('restaurant_tables').delete().neq('table_number', 0)
-  } else {
-    const nums = [...validNums]
-    await supabase
-      .from('restaurant_tables')
-      .delete()
-      .not('table_number', 'in', `(${nums.join(',')})`)
-  }
-
+  // Disabled physical cleanup to avoid deleting restaurant_tables referenced by orders.
   return c.json({ data: null, error: null })
 })
 
@@ -314,12 +277,28 @@ app.post('/orders/mock', (c) => {
   return c.json({ data: newOrder, error: null })
 })
 
-app.get('/orders/kitchen', (c) => {
-  const data = mockOrders.filter((order) =>
-    ['open', 'new', 'preparing'].includes(order.status),
-  )
+app.get('/orders/kitchen', async (c) => {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(`
+      order_id,
+      table_id,
+      waiter_id,
+      status,
+      created_at,
+      items,
+      restaurant_tables (
+        table_number
+      )
+    `)
+    .in('status', ['new', 'preparing'])
+    .order('created_at', { ascending: true })
 
-  return c.json({ data, error: null })
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data: data ?? [], error: null })
 })
 
 app.patch('/orders/:id/start', (c) => {

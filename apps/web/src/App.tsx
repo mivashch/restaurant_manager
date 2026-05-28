@@ -361,7 +361,6 @@ export default function App() {
     return <AdminPage onBack={() => setActiveRole(null)} />
   }
 
-
   if (activeRole === 'waiter' && user) {
     return <WaiterPage user={user} onBack={() => setActiveRole(null)} />
   }

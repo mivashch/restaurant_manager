@@ -20,7 +20,28 @@ export type TableEl = {
 
 export type Plan = { rooms: Room[]; tables: TableEl[] }
 
+type PlanVersion = {
+  version_id: number
+  floor_plan_id: number
+  plan_data: Plan
+  created_at: string
+}
+
 type Mode = 'draw' | 'place' | 'erase'
+
+function clonePlan(plan: Plan): Plan {
+  return {
+    rooms: plan.rooms.map(room => ({
+      ...room,
+      vertices: room.vertices.map(point => ({ ...point })),
+    })),
+    tables: plan.tables.map(table => ({ ...table })),
+  }
+}
+
+function plansEqual(a: Plan, b: Plan) {
+  return JSON.stringify(a) === JSON.stringify(b)
+}
 
 // ── Geometry ──────────────────────────────────────────────────────────────────
 
@@ -132,7 +153,7 @@ function mergeRoomIntoExisting(
   const roomContainingNewPolygon = rooms.find(
     room =>
       !room.obstacle &&
-      pointInPoly(centroid(newVertices), room.vertices) &&
+      newVertices.every(point => pointInPoly(point, room.vertices)) &&
       !polygonEdgesIntersect(room.vertices, newVertices)
   )
 
@@ -270,14 +291,21 @@ export default function FloorPlanEditor({
   const [mode, setMode] = useState<Mode>('draw')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [savedVersions, setSavedVersions] = useState<Plan[]>([])
+  const [versionIndex, setVersionIndex] = useState(0)
+
+  const canGoBack = versionIndex > 0
+  const canGoForward = versionIndex < savedVersions.length - 1
+
   const svgRef = useRef<SVGSVGElement>(null)
 
   useEffect(() => {
-    if (initial) {
-      setRooms(initial.rooms)
-      setTables(initial.tables)
-    }
-  }, [initial])
+    const nextPlan = clonePlan(initial ?? { rooms: [], tables: [] })
+
+    setRooms(nextPlan.rooms)
+    setTables(nextPlan.tables)
+    void loadSavedVersions(nextPlan)
+  }, [initial, planId])
 
   useEffect(() => {
     async function loadLockedTables() {
@@ -308,6 +336,76 @@ export default function FloorPlanEditor({
     const { x, y } = pt.matrixTransform(svg.getScreenCTM()!.inverse())
 
     return { x, y }
+  }
+
+  async function loadSavedVersions(fallbackPlan: Plan) {
+    if (!planId) {
+      setSavedVersions([clonePlan(fallbackPlan)])
+      setVersionIndex(0)
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/floor-plans/${planId}/versions`)
+      const json = await res.json()
+
+      if (!res.ok || json.error) {
+        throw new Error(json.error || 'Failed to load plan versions')
+      }
+
+      const versions = (json.data ?? []) as PlanVersion[]
+      const plans = versions.map(version => clonePlan(version.plan_data))
+
+      if (plans.length === 0) {
+        setSavedVersions([clonePlan(fallbackPlan)])
+        setVersionIndex(0)
+        return
+      }
+
+      setSavedVersions(plans)
+      setVersionIndex(plans.length - 1)
+    } catch {
+      setSavedVersions([clonePlan(fallbackPlan)])
+      setVersionIndex(0)
+      setError('Failed to load plan versions')
+    }
+  }
+
+  async function savePlanVersion(plan: Plan) {
+    if (!planId) return
+
+    const lastSavedPlan = savedVersions[savedVersions.length - 1]
+
+    if (lastSavedPlan && plansEqual(lastSavedPlan, plan)) {
+      return
+    }
+
+    const res = await fetch(`/api/floor-plans/${planId}/versions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan }),
+    })
+
+    const json = await res.json()
+
+    if (!res.ok || json.error) {
+      throw new Error(json.error || 'Failed to save plan version')
+    }
+  }
+
+  function goToHistory(step: -1 | 1) {
+    const nextIndex = versionIndex + step
+
+    if (nextIndex < 0 || nextIndex >= savedVersions.length) return
+
+    const plan = clonePlan(savedVersions[nextIndex])
+
+    setRooms(plan.rooms)
+    setTables(plan.tables)
+    setDraft([])
+    setSaved(false)
+    setError(null)
+    setVersionIndex(nextIndex)
   }
 
   function handleClick(e: React.MouseEvent) {
@@ -391,9 +489,21 @@ export default function FloorPlanEditor({
     setSaving(true)
 
     try {
+      const currentPlan = { rooms, tables }
+
       await onSave({ rooms, tables, id: planId })
+      await savePlanVersion(currentPlan)
+
+      setSavedVersions(prev => {
+        const next = [...prev, currentPlan]
+        setVersionIndex(next.length - 1)
+        return next
+      })
+
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
+    } catch {
+      setError('Failed to save floor plan')
     } finally {
       setSaving(false)
     }
@@ -438,6 +548,28 @@ export default function FloorPlanEditor({
             {m === 'draw' ? 'Draw room' : m === 'place' ? 'Place table' : 'Erase'}
           </button>
         ))}
+
+        <button
+          onClick={() => goToHistory(-1)}
+          disabled={!canGoBack}
+          className="px-3 py-1.5 text-sm font-medium rounded-lg border border-neutral-200 bg-white text-neutral-700 hover:border-neutral-400 transition disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          ← Previous saved plan
+        </button>
+
+        <button
+          onClick={() => goToHistory(1)}
+          disabled={!canGoForward}
+          className="px-3 py-1.5 text-sm font-medium rounded-lg border border-neutral-200 bg-white text-neutral-700 hover:border-neutral-400 transition disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Next saved plan →
+        </button>
+
+        <span className="text-xs text-neutral-400">
+          {savedVersions.length === 0
+            ? '0 / 0'
+            : `${versionIndex + 1} / ${savedVersions.length}`}
+        </span>
 
         <button
           onClick={() => {

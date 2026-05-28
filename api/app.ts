@@ -224,6 +224,56 @@ app.delete('/floor-plan/:id', async (c) => {
   return c.json({ data: null, error: null })
 })
 
+app.get('/floor-plans/:id/versions', async (c) => {
+  const floorPlanId = Number(c.req.param('id'))
+
+  if (!Number.isFinite(floorPlanId)) {
+    return c.json({ data: null, error: 'Invalid floor plan id' }, 400)
+  }
+
+  const { data, error } = await supabase
+    .from('floor_plan_versions')
+    .select('version_id, floor_plan_id, plan_data, created_at')
+    .eq('floor_plan_id', floorPlanId)
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data: data ?? [], error: null })
+})
+
+app.post('/floor-plans/:id/versions', async (c) => {
+  const floorPlanId = Number(c.req.param('id'))
+
+  if (!Number.isFinite(floorPlanId)) {
+    return c.json({ data: null, error: 'Invalid floor plan id' }, 400)
+  }
+
+  const body = await c.req.json()
+  const plan = body.plan
+
+  if (!plan || !Array.isArray(plan.rooms) || !Array.isArray(plan.tables)) {
+    return c.json({ data: null, error: 'Invalid plan data' }, 400)
+  }
+
+  const { data, error } = await supabase
+    .from('floor_plan_versions')
+    .insert({
+      floor_plan_id: floorPlanId,
+      plan_data: plan,
+    })
+    .select('version_id, floor_plan_id, plan_data, created_at')
+    .single()
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
+})
+
 app.patch('/tables/:num/status', async (c) => {
   const num = Number(c.req.param('num'))
   const { status } = await c.req.json<{ status: string }>()

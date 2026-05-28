@@ -119,16 +119,24 @@ function roomsTouchOrOverlap(a: Pt[], b: Pt[]) {
   )
 }
 
+type Coordinate = [number, number]
+type PolygonGeometry = Coordinate[][][]
+
 function mergePolygons(a: Pt[], b: Pt[]): Pt[] {
-  const polyA = [[a.map(p => [p.x, p.y])]]
-  const polyB = [[b.map(p => [p.x, p.y])]]
+  const polyA: PolygonGeometry = [
+    [a.map((p): Coordinate => [p.x, p.y])],
+  ]
+
+  const polyB: PolygonGeometry = [
+    [b.map((p): Coordinate => [p.x, p.y])],
+  ]
 
   const result = polygonClipping.union(polyA, polyB)
   const merged = result?.[0]?.[0]
 
   if (!merged) return a
 
-  return merged.map((point: number[]) => ({
+  return merged.map(point => ({
     x: point[0],
     y: point[1],
   }))

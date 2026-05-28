@@ -57,6 +57,7 @@ app.post('/auth/login', async (c) => {
     .from('users')
     .select('user_id, username, roles(name)')
     .eq('username', privateId)
+    .eq('is_active', true)
     .single()
 
   if (error || !data) {
@@ -546,6 +547,7 @@ app.get('/users', async (c) => {
   const { data, error } = await supabase
     .from('users')
     .select('user_id, username, roles(name)')
+    .eq('is_active', true)
     .order('role_id')
     .order('username')
 
@@ -588,7 +590,13 @@ app.post('/users', async (c) => {
 
   const { data, error } = await supabase
     .from('users')
-    .insert({ username: body.username.trim(), password_hash: placeholderHash, role_id: roleData.role_id })
+    .insert({
+      username: body.username.trim(),
+      password_hash: placeholderHash,
+      role_id: roleData.role_id,
+      is_active: true,
+      deleted_at: null,
+    })
     .select('user_id, username, roles(name)')
     .single()
 
@@ -627,7 +635,19 @@ app.put('/users/:id', async (c) => {
 
 app.delete('/users/:id', async (c) => {
   const id = Number(c.req.param('id'))
-  const { error } = await supabase.from('users').delete().eq('user_id', id)
+
+  if (!id) {
+    return c.json({ data: null, error: 'Invalid user id' }, 400)
+  }
+
+  const { error } = await supabase
+    .from('users')
+    .update({
+      is_active: false,
+      deleted_at: new Date().toISOString(),
+    })
+    .eq('user_id', id)
+
   return c.json({ data: null, error: error?.message ?? null })
 })
 

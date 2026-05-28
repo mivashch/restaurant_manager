@@ -48,13 +48,6 @@ function plansEqual(a: Plan, b: Plan) {
 function uid() { return Math.random().toString(36).slice(2, 9) }
 function dist(a: Pt, b: Pt) { return Math.hypot(a.x - b.x, a.y - b.y) }
 
-function centroid(pts: Pt[]): Pt {
-  return {
-    x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
-    y: pts.reduce((s, p) => s + p.y, 0) / pts.length
-  }
-}
-
 function pointInPoly(pt: Pt, poly: Pt[]): boolean {
   let inside = false
 
@@ -279,7 +272,6 @@ interface Props {
 export default function FloorPlanEditor({
   initial,
   planId,
-  tableNumOffset,
   onSave
 }: Props) {
   const [rooms, setRooms] = useState<Room[]>(initial?.rooms ?? [])
@@ -479,8 +471,6 @@ export default function FloorPlanEditor({
       setError('Only available tables can be deleted.')
       return
     }
-
-    const removed = table
 
     setTables(ts => ts.filter(t => t.id !== id))
   }

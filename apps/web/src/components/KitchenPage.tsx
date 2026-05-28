@@ -54,7 +54,6 @@ function formatItems(order: KitchenOrder) {
 }
 
 export default function KitchenPage({
-  user,
   onBack,
 }: {
   user: User

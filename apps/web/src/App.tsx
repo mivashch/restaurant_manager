@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { User, Role } from '@restaurant-manager/shared'
+import type { User } from '@restaurant-manager/shared'
 import FloorPlanEditor, { type Plan } from './components/FloorPlanEditor'
 import { usePersistedState } from './lib/usePersistedState'
 import MenuEditor from './components/MenuEditor'

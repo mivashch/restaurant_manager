@@ -21,7 +21,7 @@ app.post('/auth/login', async (c) => {
 
   const { data, error } = await supabase
     .from('users')
-    .select('user_id, username, roles(name)')
+    .select('user_id, username, user_permissions(roles(name))')
     .eq('username', privateId)
     .eq('is_active', true)
     .single()
@@ -30,15 +30,15 @@ app.post('/auth/login', async (c) => {
     return c.json({ data: null, error: 'Invalid Private ID' }, 401)
   }
 
-  const rolesData = data.roles as unknown as { name: string } | null
-  const roleName = rolesData?.name as Role | undefined
+  const perms = data.user_permissions as unknown as Array<{ roles: { name: string } | null }> | null
+  const roles = (perms ?? []).map(p => p.roles?.name).filter(Boolean) as Role[]
 
   return c.json({
     data: {
       user: {
         id: String(data.user_id),
         name: data.username,
-        roles: roleName ? [roleName] : [],
+        roles,
       },
     },
     error: null,
@@ -524,10 +524,19 @@ type DbUser = {
   user_id: number
   username: string
   roles: { name: string } | null
+  user_permissions: Array<{ roles: { name: string } | null }>
 }
 
 function mapUser(r: DbUser) {
-  return { id: r.user_id, username: r.username, role: r.roles?.name ?? '' }
+  const permissions = (r.user_permissions ?? [])
+    .map(p => p.roles?.name ?? '')
+    .filter(Boolean)
+  return {
+    id: r.user_id,
+    username: r.username,
+    role: r.roles?.name ?? '',
+    permissions,
+  }
 }
 
 const ROLE_PREFIX: Record<string, string> = {
@@ -540,7 +549,7 @@ const ROLE_PREFIX: Record<string, string> = {
 app.get('/users', async (c) => {
   const { data, error } = await supabase
     .from('users')
-    .select('user_id, username, roles(name)')
+    .select('user_id, username, roles!role_id(name), user_permissions(roles!role_id(name))')
     .eq('is_active', true)
     .order('role_id')
     .order('username')
@@ -570,7 +579,7 @@ app.get('/users/next-username', async (c) => {
 })
 
 app.post('/users', async (c) => {
-  const body = await c.req.json<{ username: string; role: string }>()
+  const body = await c.req.json<{ username: string; role: string; permissions?: string[] }>()
 
   const { data: roleData, error: roleError } = await supabase
     .from('roles')
@@ -595,12 +604,31 @@ app.post('/users', async (c) => {
     .single()
 
   if (error) return c.json({ data: null, error: error.message }, 500)
-  return c.json({ data: mapUser(data as unknown as DbUser), error: null })
+
+  const permNames = [...new Set([body.role, ...(body.permissions ?? [])])]
+  const { data: permRoles } = await supabase
+    .from('roles')
+    .select('role_id')
+    .in('name', permNames)
+
+  if (permRoles?.length) {
+    await supabase
+      .from('user_permissions')
+      .insert(permRoles.map(r => ({ user_id: data.user_id, role_id: r.role_id })))
+  }
+
+  const { data: full } = await supabase
+    .from('users')
+    .select('user_id, username, roles!role_id(name), user_permissions(roles!role_id(name))')
+    .eq('user_id', data.user_id)
+    .single()
+
+  return c.json({ data: mapUser(full as unknown as DbUser), error: null })
 })
 
 app.put('/users/:id', async (c) => {
   const id = Number(c.req.param('id'))
-  const body = await c.req.json<{ username?: string; role?: string }>()
+  const body = await c.req.json<{ username?: string; role?: string; permissions?: string[] }>()
 
   const update: { username?: string; role_id?: number } = {}
   if (body.username) update.username = body.username.trim()
@@ -616,15 +644,36 @@ app.put('/users/:id', async (c) => {
     update.role_id = roleData.role_id
   }
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('users')
     .update(update)
     .eq('user_id', id)
-    .select('user_id, username, roles(name)')
-    .single()
 
   if (error) return c.json({ data: null, error: error.message }, 500)
-  return c.json({ data: mapUser(data as unknown as DbUser), error: null })
+
+  if (body.permissions !== undefined) {
+    const permNames = [...new Set([...(body.role ? [body.role] : []), ...body.permissions])]
+    const { data: permRoles } = await supabase
+      .from('roles')
+      .select('role_id')
+      .in('name', permNames)
+
+    await supabase.from('user_permissions').delete().eq('user_id', id)
+    if (permRoles?.length) {
+      await supabase
+        .from('user_permissions')
+        .insert(permRoles.map(r => ({ user_id: id, role_id: r.role_id })))
+    }
+  }
+
+  const { data: full, error: fetchError } = await supabase
+    .from('users')
+    .select('user_id, username, roles!role_id(name), user_permissions(roles!role_id(name))')
+    .eq('user_id', id)
+    .single()
+
+  if (fetchError) return c.json({ data: null, error: fetchError.message }, 500)
+  return c.json({ data: mapUser(full as unknown as DbUser), error: null })
 })
 
 app.delete('/users/:id', async (c) => {

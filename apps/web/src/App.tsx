@@ -8,13 +8,20 @@ import WaiterPage from './components/WaiterPage'
 import KitchenPage from './components/KitchenPage'
 
 
-const ROLE_LABELS: Partial<Record<Role, string>> = {
+type PageRole = 'admin' | 'waiter' | 'kitchen'
+
+const ROLE_LABELS: Record<PageRole, string> = {
   admin: 'Admin',
   waiter: 'Waiter',
   kitchen: 'Kitchen',
 }
 
-const ALL_ROLES: Role[] = ['admin', 'waiter', 'kitchen']
+const ALL_ROLES: PageRole[] = ['admin', 'waiter', 'kitchen']
+
+function canOpenRole(user: User, role: PageRole) {
+  return (user.roles as string[]).includes('superadmin') || user.roles.includes(role)
+
+}
 
 // ── Admin page ────────────────────────────────────────────────────────────────
 
@@ -283,7 +290,7 @@ function LoginScreen({ onLogin }: { onLogin: (user: User) => void }) {
 
 // ── Role selection ────────────────────────────────────────────────────────────
 
-function RoleScreen({ user, onSelect, onLogout }: { user: User; onSelect: (role: Role) => void; onLogout: () => void }) {
+function RoleScreen({ user, onSelect, onLogout }: { user: User; onSelect: (role: PageRole) => void; onLogout: () => void }) {
   return (
     <main className="flex-1 flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
@@ -301,7 +308,7 @@ function RoleScreen({ user, onSelect, onLogout }: { user: User; onSelect: (role:
         <h1 className="text-2xl font-semibold text-neutral-800 mb-8">Choose role</h1>
         <div className="grid grid-cols-2 gap-3">
           {ALL_ROLES.map(role => {
-            const active = user.roles.includes(role)
+            const active = canOpenRole(user, role)
             return (
               <button
                 key={role}
@@ -336,8 +343,18 @@ export default function App() {
       return stored ? (JSON.parse(stored) as User) : null
     } catch { return null }
   })
-  const [activeRole, setActiveRole] = useState<Role | null>(() => {
-    try { return (sessionStorage.getItem(ROLE_KEY) as Role) || null } catch { return null }
+  const [activeRole, setActiveRole] = useState<PageRole | null>(() => {
+    try {
+      const stored = sessionStorage.getItem(ROLE_KEY)
+
+      if (stored === 'admin' || stored === 'waiter' || stored === 'kitchen') {
+        return stored
+      }
+
+      return null
+    } catch {
+      return null
+    }
   })
 
   useEffect(() => {
@@ -347,6 +364,8 @@ export default function App() {
 
   function handleLogin(u: User) {
     localStorage.setItem(USER_KEY, JSON.stringify(u))
+    sessionStorage.removeItem(ROLE_KEY)
+    setActiveRole(null)
     setUser(u)
   }
 

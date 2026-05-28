@@ -4,13 +4,14 @@ import { usePersistedState } from '../lib/usePersistedState'
 type AppUser = { id: number; username: string; role: string }
 type DraftUser = { id?: number; username: string; role: string }
 
-const ROLES = ['admin', 'waiter', 'kitchen'] as const
+const ROLES = ['admin', 'waiter', 'kitchen', 'superadmin'] as const
 type Role = typeof ROLES[number]
 
 const ROLE_COLORS: Record<Role, string> = {
   admin: 'bg-purple-100 text-purple-700',
   waiter: 'bg-blue-100 text-blue-700',
   kitchen: 'bg-orange-100 text-orange-700',
+  superadmin: 'bg-red-100 text-red-700',
 }
 
 async function fetchNextUsername(role: Role): Promise<string> {
@@ -87,9 +88,6 @@ function UserModal({
               placeholder="e.g. WAITER-002"
               className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-neutral-800 transition"
             />
-            <p className="text-xs text-neutral-400 mt-1">
-              Цей код співробітник вводить при вході в систему.
-            </p>
           </div>
 
           <div className="flex gap-3 pt-2">

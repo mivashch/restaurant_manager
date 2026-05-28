@@ -5,40 +5,6 @@ import type { Role } from '@restaurant-manager/shared'
 
 const app = new Hono().basePath('/api')
 
-type MockOrder = {
-  order_id: number
-  status: 'open' | 'new' | 'preparing' | 'ready' | 'served'
-  created_at: string
-  restaurant_tables: {
-    table_number: number
-  } | null
-  item_name: string
-  quantity: number
-  ordered_by: string
-  prepared_by?: string
-}
-
-let mockOrders: MockOrder[] = [
-  {
-    order_id: 201,
-    status: 'open',
-    created_at: new Date().toISOString(),
-    restaurant_tables: { table_number: 4 },
-    item_name: 'Grilled Salmon',
-    quantity: 1,
-    ordered_by: 'Joanne Doje',
-  },
-  {
-    order_id: 202,
-    status: 'preparing',
-    created_at: new Date().toISOString(),
-    restaurant_tables: { table_number: 2 },
-    item_name: 'Caesar Salad',
-    quantity: 2,
-    ordered_by: 'Joanne Doje',
-  },
-]
-
 app.use('*', cors())
 
 app.get('/health', (c) => {
@@ -541,6 +507,7 @@ const ROLE_PREFIX: Record<string, string> = {
   admin: 'ADMIN',
   waiter: 'WAITER',
   kitchen: 'KITCHEN',
+  superadmin: 'SUPERADMIN',
 }
 
 app.get('/users', async (c) => {

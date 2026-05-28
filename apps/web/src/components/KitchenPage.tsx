@@ -181,23 +181,22 @@ export default function KitchenPage({
 
   return (
     <div className="min-h-screen bg-neutral-100 flex flex-col">
-      <header className="bg-white border-b border-neutral-200 px-6 py-4 flex items-center justify-between">
-        <span className="text-sm font-medium tracking-widest uppercase text-neutral-400">
-          Restaurant Table Management
-        </span>
-        <span className="text-sm font-medium text-neutral-500">
-          Kitchen • {user.name}
-        </span>
-      </header>
+    <header className="bg-white border-b border-neutral-200 px-6 py-4 flex items-center justify-between">
+      <span className="text-sm font-medium tracking-widest uppercase text-neutral-400">
+        Restaurant Table Management
+      </span>
 
-      <main className="flex-1 px-6 py-5">
+      <div className="flex items-center gap-4">
         <button
           onClick={onBack}
-          className="text-base text-sky-700 hover:text-sky-800 transition mb-5"
+          className="text-xs text-neutral-400 hover:text-neutral-600 transition underline underline-offset-4"
         >
-          go back
+          Back to roles
         </button>
+      </div>
+    </header>
 
+      <main className="flex-1 px-6 py-5">
         {loading ? (
           <p className="text-sm text-neutral-400">Loading…</p>
         ) : errorMessage ? (

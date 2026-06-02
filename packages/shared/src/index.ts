@@ -11,7 +11,7 @@ export type HealthResponse = {
   timestamp: string
 }
 
-export type Role = 'admin' | 'waiter' | 'kitchen'
+export type Role = 'admin' | 'waiter' | 'kitchen' | 'superadmin'
 
 export type User = {
   id: string

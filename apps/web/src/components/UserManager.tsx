@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react'
 import { usePersistedState } from '../lib/usePersistedState'
 
-type AppUser = { id: number; username: string; role: string }
-type DraftUser = { id?: number; username: string; role: string }
+type AppUser = { id: number; username: string; role: string; permissions: string[] }
+type DraftUser = { id?: number; username: string; role: string; permissions: string[] }
 
-const ROLES = ['admin', 'waiter', 'kitchen'] as const
+const ROLES = ['admin', 'waiter', 'kitchen', 'superadmin'] as const
 type Role = typeof ROLES[number]
 
 const ROLE_COLORS: Record<Role, string> = {
   admin: 'bg-purple-100 text-purple-700',
   waiter: 'bg-blue-100 text-blue-700',
   kitchen: 'bg-orange-100 text-orange-700',
+  superadmin: 'bg-red-100 text-red-700',
 }
 
 async function fetchNextUsername(role: Role): Promise<string> {
@@ -36,14 +37,29 @@ function UserModal({
     if (!form.id) {
       try {
         const username = await fetchNextUsername(role as Role)
-        setForm(f => ({ ...f, role, username }))
+        setForm(f => ({
+          ...f,
+          role,
+          username,
+          permissions: [...new Set([...f.permissions, role])],
+        }))
       } catch {
-        setForm(f => ({ ...f, role }))
+        setForm(f => ({ ...f, role, permissions: [...new Set([...f.permissions, role])] }))
         alert('Failed to allocate username. Please enter manually.')
       }
     } else {
-      setForm(f => ({ ...f, role }))
+      setForm(f => ({ ...f, role, permissions: [...new Set([...f.permissions, role])] }))
     }
+  }
+
+  function togglePermission(r: string) {
+    if (r === form.role) return
+    setForm(f => ({
+      ...f,
+      permissions: f.permissions.includes(r)
+        ? f.permissions.filter(p => p !== r)
+        : [...f.permissions, r],
+    }))
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -62,7 +78,7 @@ function UserModal({
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-1">
-              Role
+              Primary role
             </label>
             <select
               required
@@ -77,6 +93,44 @@ function UserModal({
           </div>
 
           <div>
+            <label className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-2">
+              Access permissions
+            </label>
+            <div className="flex flex-col gap-2">
+              {ROLES.map(r => {
+                const isPrimary = r === form.role
+                const checked = form.permissions.includes(r)
+                return (
+                  <label
+                    key={r}
+                    className={`flex items-center gap-3 px-3 py-2 rounded-lg border transition cursor-pointer select-none ${
+                      isPrimary
+                        ? 'border-neutral-200 bg-neutral-50 opacity-60 cursor-not-allowed'
+                        : checked
+                        ? 'border-neutral-300 bg-white'
+                        : 'border-neutral-100 bg-white hover:border-neutral-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={isPrimary}
+                      onChange={() => togglePermission(r)}
+                      className="w-4 h-4 accent-neutral-800"
+                    />
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${ROLE_COLORS[r]}`}>
+                      {r.charAt(0).toUpperCase() + r.slice(1)}
+                    </span>
+                    {isPrimary && (
+                      <span className="text-xs text-neutral-400 ml-auto">primary</span>
+                    )}
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+
+          <div>
             <label className="block text-xs font-medium uppercase tracking-wider text-neutral-400 mb-1">
               Private ID
             </label>
@@ -87,9 +141,6 @@ function UserModal({
               placeholder="e.g. WAITER-002"
               className="w-full px-4 py-2.5 rounded-xl border border-neutral-200 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-neutral-800 transition"
             />
-            <p className="text-xs text-neutral-400 mt-1">
-              Цей код співробітник вводить при вході в систему.
-            </p>
           </div>
 
           <div className="flex gap-3 pt-2">
@@ -133,7 +184,9 @@ export default function UserManager() {
   }, [])
 
   const roleTabs = ['All', ...ROLES]
-  const visible = activeRole === 'All' ? users : users.filter(u => u.role === activeRole)
+  const visible = activeRole === 'All'
+    ? users
+    : users.filter(u => u.permissions.includes(activeRole))
 
   async function saveUser(draft: DraftUser) {
     const method = draft.id ? 'PUT' : 'POST'
@@ -142,7 +195,11 @@ export default function UserManager() {
       const res = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: draft.username, role: draft.role }),
+        body: JSON.stringify({
+          username: draft.username,
+          role: draft.role,
+          permissions: draft.permissions,
+        }),
       })
       const json = await res.json().catch(() => null)
       if (!res.ok || !json?.data) {
@@ -179,9 +236,9 @@ export default function UserManager() {
       : 'waiter'
     try {
       const username = await fetchNextUsername(initialRole)
-      setEditing({ username, role: initialRole })
+      setEditing({ username, role: initialRole, permissions: [initialRole] })
     } catch {
-      setEditing({ username: '', role: initialRole })
+      setEditing({ username: '', role: initialRole, permissions: [initialRole] })
       alert('Failed to allocate username. Please enter manually.')
     }
   }
@@ -203,7 +260,9 @@ export default function UserManager() {
             >
               {tab === 'All' ? 'All' : tab.charAt(0).toUpperCase() + tab.slice(1)}
               <span className="ml-1.5 text-xs text-neutral-300">
-                {tab === 'All' ? users.length : users.filter(u => u.role === tab).length}
+                {tab === 'All'
+                  ? users.length
+                  : users.filter(u => u.permissions.includes(tab)).length}
               </span>
             </button>
           ))}
@@ -232,7 +291,7 @@ export default function UserManager() {
                   Private ID
                 </th>
                 <th className="text-left px-4 py-3 text-xs font-medium uppercase tracking-wider text-neutral-400">
-                  Role
+                  Permissions
                 </th>
                 <th className="px-4 py-3" />
               </tr>
@@ -244,14 +303,21 @@ export default function UserManager() {
                     {user.username}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${ROLE_COLORS[user.role as Role] ?? 'bg-neutral-100 text-neutral-500'}`}>
-                      {user.role}
-                    </span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(user.permissions.length ? user.permissions : [user.role]).map(p => (
+                        <span
+                          key={p}
+                          className={`text-xs font-medium px-2.5 py-1 rounded-full ${ROLE_COLORS[p as Role] ?? 'bg-neutral-100 text-neutral-500'}`}
+                        >
+                          {p}
+                        </span>
+                      ))}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3 justify-end">
                       <button
-                        onClick={() => setEditing(user)}
+                        onClick={() => setEditing({ ...user })}
                         className="text-xs text-neutral-400 hover:text-neutral-700 transition"
                       >
                         Edit

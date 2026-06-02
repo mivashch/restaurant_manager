@@ -5,40 +5,6 @@ import type { Role } from '@restaurant-manager/shared'
 
 const app = new Hono().basePath('/api')
 
-type MockOrder = {
-  order_id: number
-  status: 'open' | 'new' | 'preparing' | 'ready' | 'served'
-  created_at: string
-  restaurant_tables: {
-    table_number: number
-  } | null
-  item_name: string
-  quantity: number
-  ordered_by: string
-  prepared_by?: string
-}
-
-let mockOrders: MockOrder[] = [
-  {
-    order_id: 201,
-    status: 'open',
-    created_at: new Date().toISOString(),
-    restaurant_tables: { table_number: 4 },
-    item_name: 'Grilled Salmon',
-    quantity: 1,
-    ordered_by: 'Joanne Doje',
-  },
-  {
-    order_id: 202,
-    status: 'preparing',
-    created_at: new Date().toISOString(),
-    restaurant_tables: { table_number: 2 },
-    item_name: 'Caesar Salad',
-    quantity: 2,
-    ordered_by: 'Joanne Doje',
-  },
-]
-
 app.use('*', cors())
 
 app.get('/health', (c) => {
@@ -55,23 +21,24 @@ app.post('/auth/login', async (c) => {
 
   const { data, error } = await supabase
     .from('users')
-    .select('user_id, username, roles(name)')
+    .select('user_id, username, user_permissions(roles(name))')
     .eq('username', privateId)
+    .eq('is_active', true)
     .single()
 
   if (error || !data) {
     return c.json({ data: null, error: 'Invalid Private ID' }, 401)
   }
 
-  const rolesData = data.roles as unknown as { name: string } | null
-  const roleName = rolesData?.name as Role | undefined
+  const perms = data.user_permissions as unknown as Array<{ roles: { name: string } | null }> | null
+  const roles = (perms ?? []).map(p => p.roles?.name).filter(Boolean) as Role[]
 
   return c.json({
     data: {
       user: {
         id: String(data.user_id),
         name: data.username,
-        roles: roleName ? [roleName] : [],
+        roles,
       },
     },
     error: null,
@@ -104,45 +71,24 @@ app.get('/floor-plan', async (c) => {
 async function syncTablesForFloor(prevTableNums: number[], tables: Array<{ num: number }>): Promise<string | null> {
   const tableNums = tables?.map((t) => t.num) ?? []
 
-  const toDelete = prevTableNums.filter(n => !tableNums.includes(n))
-  if (toDelete.length) {
-    const { error } = await supabase.from('restaurant_tables').delete().in('table_number', toDelete)
-    if (error) return error.message
-  }
-
   const toInsert = tableNums.filter(n => !prevTableNums.includes(n))
+
   if (toInsert.length) {
     const { error } = await supabase.from('restaurant_tables').upsert(
       toInsert.map(num => ({ table_number: num, status: 'available' })),
       { onConflict: 'table_number' },
     )
+
     if (error) return error.message
   }
 
   return null
 }
-
 async function cleanupOrphanTables(): Promise<string | null> {
-  const { data: allFloors, error: readError } = await supabase.from('floor_plans').select('data')
-  if (readError) return readError.message
-
-  const validNums = new Set(
-    (allFloors ?? []).flatMap(f =>
-      ((f.data as { tables?: Array<{ num: number }> })?.tables ?? []).map(t => t.num)
-    )
-  )
-
-  if (validNums.size === 0) {
-    const { error } = await supabase.from('restaurant_tables').delete().neq('table_number', 0)
-    return error?.message ?? null
-  }
-
-  const nums = [...validNums]
-  const { error } = await supabase
-    .from('restaurant_tables')
-    .delete()
-    .not('table_number', 'in', `(${nums.join(',')})`)
-  return error?.message ?? null
+  // Do not physically delete restaurant_tables here.
+  // Floor plan editing only removes tables from the visual plan.
+  // The database rows may still be referenced by orders, so deleting them here can break saves.
+  return null
 }
 
 app.post('/floor-plan', async (c) => {
@@ -209,25 +155,26 @@ app.post('/floor-plan', async (c) => {
   return c.json({ data: result.data, error: null })
 })
 
-// Remove restaurant_tables entries that are no longer referenced by any floor plan
-app.post('/tables/cleanup', async (c) => {
-  const { data: floors } = await supabase.from('floor_plans').select('data')
-  const validNums = new Set(
-    (floors ?? []).flatMap(f =>
-      ((f.data as { tables?: Array<{ num: number }> })?.tables ?? []).map(t => t.num)
-    )
-  )
+app.get('/tables/locked', async c => {
+  const { data, error } = await supabase
+    .from('restaurant_tables')
+    .select('table_number')
+    .neq('status', 'available')
 
-  if (validNums.size === 0) {
-    await supabase.from('restaurant_tables').delete().neq('table_number', 0)
-  } else {
-    const nums = [...validNums]
-    await supabase
-      .from('restaurant_tables')
-      .delete()
-      .not('table_number', 'in', `(${nums.join(',')})`)
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
   }
 
+  const lockedTableNumbers = [
+    ...new Set((data ?? []).map(table => table.table_number)),
+  ]
+
+  return c.json({ data: lockedTableNumbers, error: null })
+})
+
+// Remove restaurant_tables entries that are no longer referenced by any floor plan
+app.post('/tables/cleanup', async (c) => {
+  // Disabled physical cleanup to avoid deleting restaurant_tables referenced by orders.
   return c.json({ data: null, error: null })
 })
 
@@ -242,6 +189,56 @@ app.delete('/floor-plan/:id', async (c) => {
   if (orphanErr) return c.json({ data: null, error: orphanErr }, 500)
 
   return c.json({ data: null, error: null })
+})
+
+app.get('/floor-plans/:id/versions', async (c) => {
+  const floorPlanId = Number(c.req.param('id'))
+
+  if (!Number.isFinite(floorPlanId)) {
+    return c.json({ data: null, error: 'Invalid floor plan id' }, 400)
+  }
+
+  const { data, error } = await supabase
+    .from('floor_plan_versions')
+    .select('version_id, floor_plan_id, plan_data, created_at')
+    .eq('floor_plan_id', floorPlanId)
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data: data ?? [], error: null })
+})
+
+app.post('/floor-plans/:id/versions', async (c) => {
+  const floorPlanId = Number(c.req.param('id'))
+
+  if (!Number.isFinite(floorPlanId)) {
+    return c.json({ data: null, error: 'Invalid floor plan id' }, 400)
+  }
+
+  const body = await c.req.json()
+  const plan = body.plan
+
+  if (!plan || !Array.isArray(plan.rooms) || !Array.isArray(plan.tables)) {
+    return c.json({ data: null, error: 'Invalid plan data' }, 400)
+  }
+
+  const { data, error } = await supabase
+    .from('floor_plan_versions')
+    .insert({
+      floor_plan_id: floorPlanId,
+      plan_data: plan,
+    })
+    .select('version_id, floor_plan_id, plan_data, created_at')
+    .single()
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
 })
 
 app.patch('/tables/:num/status', async (c) => {
@@ -274,69 +271,82 @@ app.patch('/tables/:num/status', async (c) => {
   return c.json({ data, error: error?.message ?? null })
 })
 
-app.post('/orders/mock', (c) => {
-  const dishes = [
-    '2x Margherita Pizza\n1x Caesar Salad',
-    '1x Beef Burger\n2x French Fries\n1x Cola',
-    '3x Spaghetti Carbonara',
-    '1x Grilled Salmon\n1x Lemonade',
-    '2x Chicken Wings\n1x Beer',
-  ]
-  const tableNum = Math.ceil(Math.random() * 5)
-  const item_name = dishes[Math.floor(Math.random() * dishes.length)]
-  const newOrder: MockOrder = {
-    order_id: Date.now(),
-    status: 'new',
-    created_at: new Date().toISOString(),
-    restaurant_tables: { table_number: tableNum },
-    item_name,
-    quantity: 1,
-    ordered_by: 'Waiter',
+
+const ORDER_SELECT = `
+  order_id,
+  table_id,
+  waiter_id,
+  status,
+  created_at,
+  items,
+  restaurant_tables (
+    table_number
+  )
+`
+
+app.get('/orders/kitchen', async (c) => {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(ORDER_SELECT)
+    .in('status', ['new', 'preparing'])
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
   }
-  mockOrders.push(newOrder)
-  return c.json({ data: newOrder, error: null })
+
+  return c.json({ data: data ?? [], error: null })
 })
 
-app.get('/orders/kitchen', (c) => {
-  const data = mockOrders.filter((order) =>
-    ['open', 'new', 'preparing'].includes(order.status),
-  )
+app.patch('/orders/:id/start', async (c) => {
+  const orderId = Number(c.req.param('id'))
+
+  if (!orderId) {
+    return c.json({ data: null, error: 'Invalid order id' }, 400)
+  }
+
+  const { data: order, error: findError } = await supabase
+    .from('orders')
+    .select('order_id, status')
+    .eq('order_id', orderId)
+    .single()
+
+  if (findError || !order) {
+    return c.json({ data: null, error: 'Order not found' }, 404)
+  }
+
+  if (!['new'].includes(order.status)) {
+    return c.json({ data: null, error: 'Order cannot be started' }, 400)
+  }
+
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'preparing' })
+    .eq('order_id', orderId)
+    .select(ORDER_SELECT)
+    .single()
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
 
   return c.json({ data, error: null })
 })
 
-app.patch('/orders/:id/start', (c) => {
+app.patch('/orders/:id/ready', async (c) => {
   const orderId = Number(c.req.param('id'))
 
   if (!orderId) {
     return c.json({ data: null, error: 'Invalid order id' }, 400)
   }
 
-  const order = mockOrders.find((o) => o.order_id === orderId)
+  const { data: order, error: findError } = await supabase
+    .from('orders')
+    .select('order_id, status')
+    .eq('order_id', orderId)
+    .single()
 
-  if (!order) {
-    return c.json({ data: null, error: 'Order not found' }, 404)
-  }
-
-  if (!['open', 'new'].includes(order.status)) {
-    return c.json({ data: null, error: 'Order cannot be started' }, 400)
-  }
-
-  order.status = 'preparing'
-
-  return c.json({ data: order, error: null })
-})
-
-app.patch('/orders/:id/ready', (c) => {
-  const orderId = Number(c.req.param('id'))
-
-  if (!orderId) {
-    return c.json({ data: null, error: 'Invalid order id' }, 400)
-  }
-
-  const order = mockOrders.find((o) => o.order_id === orderId)
-
-  if (!order) {
+  if (findError || !order) {
     return c.json({ data: null, error: 'Order not found' }, 404)
   }
 
@@ -344,15 +354,32 @@ app.patch('/orders/:id/ready', (c) => {
     return c.json({ data: null, error: 'Order is not preparing' }, 400)
   }
 
-  order.status = 'ready'
-  order.prepared_by = 'Kitchen'
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'ready' })
+    .eq('order_id', orderId)
+    .select(ORDER_SELECT)
+    .single()
 
-  return c.json({ data: order, error: null })
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
 })
 
-app.get('/orders/runner', (c) => {
-  const data = mockOrders.filter((order) => order.status === 'ready')
-  return c.json({ data, error: null })
+app.get('/orders/runner', async (c) => {
+  const { data, error } = await supabase
+    .from('orders')
+    .select(ORDER_SELECT)
+    .eq('status', 'ready')
+    .order('created_at', { ascending: true })
+
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data: data ?? [], error: null })
 })
 
 app.patch('/orders/:id/take', async (c) => {
@@ -362,9 +389,13 @@ app.patch('/orders/:id/take', async (c) => {
     return c.json({ data: null, error: 'Invalid order id' }, 400)
   }
 
-  const order = mockOrders.find((o) => o.order_id === orderId)
+  const { data: order, error: findError } = await supabase
+    .from('orders')
+    .select('order_id, status')
+    .eq('order_id', orderId)
+    .single()
 
-  if (!order) {
+  if (findError || !order) {
     return c.json({ data: null, error: 'Order not found' }, 404)
   }
 
@@ -372,9 +403,18 @@ app.patch('/orders/:id/take', async (c) => {
     return c.json({ data: null, error: 'Order is not ready' }, 400)
   }
 
-  order.status = 'served'
+  const { data, error } = await supabase
+    .from('orders')
+    .update({ status: 'served' })
+    .eq('order_id', orderId)
+    .select(ORDER_SELECT)
+    .single()
 
-  return c.json({ data: order, error: null })
+  if (error) {
+    return c.json({ data: null, error: error.message }, 500)
+  }
+
+  return c.json({ data, error: null })
 })
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
@@ -484,22 +524,33 @@ type DbUser = {
   user_id: number
   username: string
   roles: { name: string } | null
+  user_permissions: Array<{ roles: { name: string } | null }>
 }
 
 function mapUser(r: DbUser) {
-  return { id: r.user_id, username: r.username, role: r.roles?.name ?? '' }
+  const permissions = (r.user_permissions ?? [])
+    .map(p => p.roles?.name ?? '')
+    .filter(Boolean)
+  return {
+    id: r.user_id,
+    username: r.username,
+    role: r.roles?.name ?? '',
+    permissions,
+  }
 }
 
 const ROLE_PREFIX: Record<string, string> = {
   admin: 'ADMIN',
   waiter: 'WAITER',
   kitchen: 'KITCHEN',
+  superadmin: 'SUPERADMIN',
 }
 
 app.get('/users', async (c) => {
   const { data, error } = await supabase
     .from('users')
-    .select('user_id, username, roles(name)')
+    .select('user_id, username, roles!role_id(name), user_permissions(roles!role_id(name))')
+    .eq('is_active', true)
     .order('role_id')
     .order('username')
 
@@ -528,7 +579,7 @@ app.get('/users/next-username', async (c) => {
 })
 
 app.post('/users', async (c) => {
-  const body = await c.req.json<{ username: string; role: string }>()
+  const body = await c.req.json<{ username: string; role: string; permissions?: string[] }>()
 
   const { data: roleData, error: roleError } = await supabase
     .from('roles')
@@ -542,17 +593,42 @@ app.post('/users', async (c) => {
 
   const { data, error } = await supabase
     .from('users')
-    .insert({ username: body.username.trim(), password_hash: placeholderHash, role_id: roleData.role_id })
+    .insert({
+      username: body.username.trim(),
+      password_hash: placeholderHash,
+      role_id: roleData.role_id,
+      is_active: true,
+      deleted_at: null,
+    })
     .select('user_id, username, roles(name)')
     .single()
 
   if (error) return c.json({ data: null, error: error.message }, 500)
-  return c.json({ data: mapUser(data as unknown as DbUser), error: null })
+
+  const permNames = [...new Set([body.role, ...(body.permissions ?? [])])]
+  const { data: permRoles } = await supabase
+    .from('roles')
+    .select('role_id')
+    .in('name', permNames)
+
+  if (permRoles?.length) {
+    await supabase
+      .from('user_permissions')
+      .insert(permRoles.map(r => ({ user_id: data.user_id, role_id: r.role_id })))
+  }
+
+  const { data: full } = await supabase
+    .from('users')
+    .select('user_id, username, roles!role_id(name), user_permissions(roles!role_id(name))')
+    .eq('user_id', data.user_id)
+    .single()
+
+  return c.json({ data: mapUser(full as unknown as DbUser), error: null })
 })
 
 app.put('/users/:id', async (c) => {
   const id = Number(c.req.param('id'))
-  const body = await c.req.json<{ username?: string; role?: string }>()
+  const body = await c.req.json<{ username?: string; role?: string; permissions?: string[] }>()
 
   const update: { username?: string; role_id?: number } = {}
   if (body.username) update.username = body.username.trim()
@@ -568,20 +644,53 @@ app.put('/users/:id', async (c) => {
     update.role_id = roleData.role_id
   }
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('users')
     .update(update)
     .eq('user_id', id)
-    .select('user_id, username, roles(name)')
-    .single()
 
   if (error) return c.json({ data: null, error: error.message }, 500)
-  return c.json({ data: mapUser(data as unknown as DbUser), error: null })
+
+  if (body.permissions !== undefined) {
+    const permNames = [...new Set([...(body.role ? [body.role] : []), ...body.permissions])]
+    const { data: permRoles } = await supabase
+      .from('roles')
+      .select('role_id')
+      .in('name', permNames)
+
+    await supabase.from('user_permissions').delete().eq('user_id', id)
+    if (permRoles?.length) {
+      await supabase
+        .from('user_permissions')
+        .insert(permRoles.map(r => ({ user_id: id, role_id: r.role_id })))
+    }
+  }
+
+  const { data: full, error: fetchError } = await supabase
+    .from('users')
+    .select('user_id, username, roles!role_id(name), user_permissions(roles!role_id(name))')
+    .eq('user_id', id)
+    .single()
+
+  if (fetchError) return c.json({ data: null, error: fetchError.message }, 500)
+  return c.json({ data: mapUser(full as unknown as DbUser), error: null })
 })
 
 app.delete('/users/:id', async (c) => {
   const id = Number(c.req.param('id'))
-  const { error } = await supabase.from('users').delete().eq('user_id', id)
+
+  if (!id) {
+    return c.json({ data: null, error: 'Invalid user id' }, 400)
+  }
+
+  const { error } = await supabase
+    .from('users')
+    .update({
+      is_active: false,
+      deleted_at: new Date().toISOString(),
+    })
+    .eq('user_id', id)
+
   return c.json({ data: null, error: error?.message ?? null })
 })
 

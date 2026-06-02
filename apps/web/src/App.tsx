@@ -65,7 +65,7 @@ function AdminPage({ onBack }: { onBack: () => void }) {
       })
       .catch(() => setError('Failed to load floor plans'))
       .finally(() => setLoading(false))
-  }, [])
+    }, [activeFloor, setActiveFloor])
 
   function makeSaveHandler(floorNumber: number) {
     return async (data: Plan & { id?: number }) => {
@@ -135,14 +135,6 @@ function AdminPage({ onBack }: { onBack: () => void }) {
   }
 
   const currentFloor = floors.find(f => f.floor_number === activeFloor)
-
-  // Global max table num across all floors except the active one (for offset)
-  const tableNumOffset = Math.max(
-    0,
-    ...floors
-      .filter(f => f.floor_number !== activeFloor)
-      .flatMap(f => f.data.tables.map(t => t.num))
-  )
 
   return (
     <div className="min-h-screen bg-neutral-50 flex flex-col">
@@ -221,7 +213,6 @@ function AdminPage({ onBack }: { onBack: () => void }) {
             key={activeFloor}
             initial={currentFloor.data}
             planId={currentFloor.id}
-            tableNumOffset={tableNumOffset}
             onSave={makeSaveHandler(activeFloor)}
           />
         ) : null}

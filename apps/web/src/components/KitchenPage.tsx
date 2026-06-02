@@ -125,8 +125,59 @@ export default function KitchenPage({
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders' },
-        () => {
-          loadOrders()
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const newOrder = payload.new as KitchenOrder
+
+            setOrders((prev) => {
+              const alreadyExists = prev.some(
+                (order) => order.order_id === newOrder.order_id,
+              )
+
+              if (alreadyExists) {
+                return prev
+              }
+
+              return [newOrder, ...prev]
+            })
+          }
+
+          if (payload.eventType === 'UPDATE') {
+            const updatedOrder = payload.new as KitchenOrder
+
+            setOrders((prev) => {
+              if (
+                updatedOrder.status === 'ready' ||
+                updatedOrder.status === 'served'
+              ) {
+                return prev.filter(
+                  (order) => order.order_id !== updatedOrder.order_id,
+                )
+              }
+
+              const exists = prev.some(
+                (order) => order.order_id === updatedOrder.order_id,
+              )
+
+              if (!exists) {
+                return [updatedOrder, ...prev]
+              }
+
+              return prev.map((order) =>
+                order.order_id === updatedOrder.order_id
+                  ? { ...order, ...updatedOrder }
+                  : order,
+              )
+            })
+          }
+
+          if (payload.eventType === 'DELETE') {
+            const deletedOrder = payload.old as Pick<KitchenOrder, 'order_id'>
+
+            setOrders((prev) =>
+              prev.filter((order) => order.order_id !== deletedOrder.order_id),
+            )
+          }
         },
       )
       .subscribe()

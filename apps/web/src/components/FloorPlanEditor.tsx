@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import polygonClipping from "polygon-clipping"
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -260,20 +260,19 @@ function canPlace(pt: Pt, rooms: Room[], tables: TableEl[]) {
   return inRoom && !inObst && !tooClose
 }
 
-
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const W = 1000
 const H = 650
 const SNAP = 18
 const TR = 18
+const MAX_SAVED_PLAN_VERSIONS = 20
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface Props {
   initial?: Plan
   planId?: number
-  tableNumOffset?: number
   onSave: (plan: Plan & { id?: number }) => Promise<void>
 }
 
@@ -299,13 +298,48 @@ export default function FloorPlanEditor({
 
   const svgRef = useRef<SVGSVGElement>(null)
 
+  const loadSavedVersions = useCallback(async (fallbackPlan: Plan) => {
+    if (!planId) {
+      setSavedVersions([clonePlan(fallbackPlan)])
+      setVersionIndex(0)
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/floor-plans/${planId}/versions`)
+      const json = await res.json()
+
+      if (!res.ok || json.error) {
+        throw new Error(json.error || 'Failed to load plan versions')
+      }
+
+      const versions = (json.data ?? []) as PlanVersion[]
+      const plans = versions
+        .map(version => clonePlan(version.plan_data))
+        .slice(-MAX_SAVED_PLAN_VERSIONS)
+
+      if (plans.length === 0) {
+        setSavedVersions([clonePlan(fallbackPlan)])
+        setVersionIndex(0)
+        return
+      }
+
+      setSavedVersions(plans)
+      setVersionIndex(plans.length - 1)
+    } catch {
+      setSavedVersions([clonePlan(fallbackPlan)])
+      setVersionIndex(0)
+      setError('Failed to load plan versions')
+    }
+  }, [planId])
+
   useEffect(() => {
     const nextPlan = clonePlan(initial ?? { rooms: [], tables: [] })
 
     setRooms(nextPlan.rooms)
     setTables(nextPlan.tables)
     void loadSavedVersions(nextPlan)
-  }, [initial, planId])
+  }, [initial, loadSavedVersions])
 
   useEffect(() => {
     async function loadLockedTables() {
@@ -336,39 +370,6 @@ export default function FloorPlanEditor({
     const { x, y } = pt.matrixTransform(svg.getScreenCTM()!.inverse())
 
     return { x, y }
-  }
-
-  async function loadSavedVersions(fallbackPlan: Plan) {
-    if (!planId) {
-      setSavedVersions([clonePlan(fallbackPlan)])
-      setVersionIndex(0)
-      return
-    }
-
-    try {
-      const res = await fetch(`/api/floor-plans/${planId}/versions`)
-      const json = await res.json()
-
-      if (!res.ok || json.error) {
-        throw new Error(json.error || 'Failed to load plan versions')
-      }
-
-      const versions = (json.data ?? []) as PlanVersion[]
-      const plans = versions.map(version => clonePlan(version.plan_data))
-
-      if (plans.length === 0) {
-        setSavedVersions([clonePlan(fallbackPlan)])
-        setVersionIndex(0)
-        return
-      }
-
-      setSavedVersions(plans)
-      setVersionIndex(plans.length - 1)
-    } catch {
-      setSavedVersions([clonePlan(fallbackPlan)])
-      setVersionIndex(0)
-      setError('Failed to load plan versions')
-    }
   }
 
   async function savePlanVersion(plan: Plan) {
@@ -467,8 +468,6 @@ export default function FloorPlanEditor({
     setError(null)
   }
 
-
-
   function eraseTable(id: string, e: React.MouseEvent) {
     e.stopPropagation()
 
@@ -493,7 +492,14 @@ export default function FloorPlanEditor({
       await savePlanVersion(currentPlan)
 
       setSavedVersions(prev => {
-        const next = [...prev, currentPlan]
+        const lastSavedPlan = prev[prev.length - 1]
+
+        if (lastSavedPlan && plansEqual(lastSavedPlan, currentPlan)) {
+          setVersionIndex(prev.length - 1)
+          return prev
+        }
+
+        const next = [...prev, clonePlan(currentPlan)].slice(-MAX_SAVED_PLAN_VERSIONS)
         setVersionIndex(next.length - 1)
         return next
       })

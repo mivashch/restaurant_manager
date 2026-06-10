@@ -1,57 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { formatTime, formatItems } from '../lib/order-utils'
+import type { KitchenOrder } from '../lib/order-utils'
 import type { User } from '@restaurant-manager/shared'
 
 type OrderStatus = 'open' | 'new' | 'preparing' | 'ready' | 'served'
-
-type KitchenOrder = {
-  order_id: number
-  table_id?: number | null
-  items?: string | null
-  status: OrderStatus
-  created_at: string
-  item_name?: string | null
-  quantity?: number | null
-  ordered_by?: string | null
-  restaurant_tables?: {
-    table_number?: number | null
-  } | null
-}
-
-function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
-function formatItems(order: KitchenOrder) {
-  if (order.item_name) {
-    return `${order.item_name}${order.quantity ? ` × ${order.quantity}` : ''}`
-  }
-
-  if (!order.items) {
-    return 'No items'
-  }
-
-  try {
-    const parsed = JSON.parse(order.items)
-
-    if (Array.isArray(parsed)) {
-      return parsed
-        .map((item) => {
-          const name = item.name ?? item.item_name ?? item.title ?? 'Item'
-          const quantity = item.quantity ?? item.qty ?? 1
-          return `${name} × ${quantity}`
-        })
-        .join('\n')
-    }
-
-    return typeof parsed === 'string' ? parsed : JSON.stringify(parsed)
-  } catch {
-    return order.items
-  }
-}
 
 export default function KitchenPage({
   onBack,

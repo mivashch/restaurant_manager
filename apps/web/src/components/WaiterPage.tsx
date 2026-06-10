@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { usePersistedState } from '../lib/usePersistedState'
 import { supabase } from '../lib/supabase'
+import { fitViewBox, parseCartItems, formatTime } from '../lib/order-utils'
+import type { CartItem } from '../lib/order-utils'
 import type { Plan, Room } from './FloorPlanEditor'
 import type { MenuItem } from './MenuEditor'
 import type { User } from '@restaurant-manager/shared'
@@ -8,7 +10,6 @@ import type { User } from '@restaurant-manager/shared'
 type WaiterTab = 'floor' | 'deliveries'
 type Status = 'available' | 'occupied' | 'reserved'
 type TableStatuses = Record<number, Status>
-type CartItem = { id: number; name: string; price: number; quantity: number }
 
 type FloorData = {
   id: number
@@ -32,23 +33,7 @@ type OrderRecord = {
   created_at: string
 }
 
-const SVG_WIDTH = 1000
-const SVG_HEIGHT = 650
 const TABLE_RADIUS = 18
-
-function fitViewBox(plan: Plan): string {
-  const pts = [
-    ...plan.tables.map(t => ({ x: t.x, y: t.y })),
-    ...plan.rooms.flatMap(r => r.vertices),
-  ]
-  if (!pts.length) return `0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`
-  const pad = 48
-  const minX = Math.min(...pts.map(p => p.x)) - pad - TABLE_RADIUS
-  const minY = Math.min(...pts.map(p => p.y)) - pad - TABLE_RADIUS
-  const maxX = Math.max(...pts.map(p => p.x)) + pad + TABLE_RADIUS
-  const maxY = Math.max(...pts.map(p => p.y)) + pad + TABLE_RADIUS
-  return `${minX} ${minY} ${maxX - minX} ${maxY - minY}`
-}
 
 const STATUS_COLOR: Record<Status, string> = {
   available: '#22c55e',
@@ -65,15 +50,6 @@ function RoomPolygon({ room }: { room: Room }) {
       strokeWidth={2}
     />
   )
-}
-
-function parseCartItems(raw: string | null): CartItem[] {
-  if (!raw) return []
-  try { return JSON.parse(raw) } catch { return [] }
-}
-
-function formatTime(value: string) {
-  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 function MapModal({

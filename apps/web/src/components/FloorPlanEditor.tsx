@@ -1,24 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import polygonClipping from "polygon-clipping"
+import { dist, pointInPoly, roomsTouchOrOverlap, polygonEdgesIntersect, segmentsIntersect, mergePolygons, uid } from '../lib/geometry'
+import type { Pt } from '../lib/geometry'
+import { clonePlan, plansEqual, getNextTableNumber, canPlace } from '../lib/plan-utils'
+import type { Room, TableEl, Plan } from '../lib/plan-utils'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── Types (re-export for backward compat) ────────────────────────────────────
 
-export type Pt = { x: number; y: number }
-
-export type Room = {
-  id: string
-  vertices: Pt[]
-  obstacle: boolean
-}
-
-export type TableEl = {
-  id: string
-  num: number
-  x: number
-  y: number
-}
-
-export type Plan = { rooms: Room[]; tables: TableEl[] }
+export type { Pt, Room, TableEl, Plan }
 
 type PlanVersion = {
   version_id: number
@@ -28,119 +16,6 @@ type PlanVersion = {
 }
 
 type Mode = 'draw' | 'place' | 'erase'
-
-function clonePlan(plan: Plan): Plan {
-  return {
-    rooms: plan.rooms.map(room => ({
-      ...room,
-      vertices: room.vertices.map(point => ({ ...point })),
-    })),
-    tables: plan.tables.map(table => ({ ...table })),
-  }
-}
-
-function plansEqual(a: Plan, b: Plan) {
-  return JSON.stringify(a) === JSON.stringify(b)
-}
-
-// ── Geometry ──────────────────────────────────────────────────────────────────
-
-function uid() { return Math.random().toString(36).slice(2, 9) }
-function dist(a: Pt, b: Pt) { return Math.hypot(a.x - b.x, a.y - b.y) }
-
-function pointInPoly(pt: Pt, poly: Pt[]): boolean {
-  let inside = false
-
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const { x: xi, y: yi } = poly[i]
-    const { x: xj, y: yj } = poly[j]
-
-    if (
-      (yi > pt.y) !== (yj > pt.y) &&
-      pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi) + xi
-    ) {
-      inside = !inside
-    }
-  }
-
-  return inside
-}
-
-function orientation(a: Pt, b: Pt, c: Pt) {
-  return (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y)
-}
-
-function onSegment(a: Pt, b: Pt, c: Pt) {
-  return (
-    Math.min(a.x, c.x) <= b.x &&
-    b.x <= Math.max(a.x, c.x) &&
-    Math.min(a.y, c.y) <= b.y &&
-    b.y <= Math.max(a.y, c.y)
-  )
-}
-
-function segmentsIntersect(a1: Pt, a2: Pt, b1: Pt, b2: Pt) {
-  const o1 = orientation(a1, a2, b1)
-  const o2 = orientation(a1, a2, b2)
-  const o3 = orientation(b1, b2, a1)
-  const o4 = orientation(b1, b2, a2)
-
-  if (o1 * o2 < 0 && o3 * o4 < 0) return true
-
-  if (o1 === 0 && onSegment(a1, b1, a2)) return true
-  if (o2 === 0 && onSegment(a1, b2, a2)) return true
-  if (o3 === 0 && onSegment(b1, a1, b2)) return true
-  if (o4 === 0 && onSegment(b1, a2, b2)) return true
-
-  return false
-}
-
-function polygonEdgesIntersect(a: Pt[], b: Pt[]) {
-  for (let i = 0; i < a.length; i++) {
-    const a1 = a[i]
-    const a2 = a[(i + 1) % a.length]
-
-    for (let j = 0; j < b.length; j++) {
-      const b1 = b[j]
-      const b2 = b[(j + 1) % b.length]
-
-      if (segmentsIntersect(a1, a2, b1, b2)) return true
-    }
-  }
-
-  return false
-}
-
-function roomsTouchOrOverlap(a: Pt[], b: Pt[]) {
-  return (
-    a.some(p => pointInPoly(p, b)) ||
-    b.some(p => pointInPoly(p, a)) ||
-    polygonEdgesIntersect(a, b)
-  )
-}
-
-type Coordinate = [number, number]
-type PolygonGeometry = Coordinate[][][]
-
-function mergePolygons(a: Pt[], b: Pt[]): Pt[] {
-  const polyA: PolygonGeometry = [
-    [a.map((p): Coordinate => [p.x, p.y])],
-  ]
-
-  const polyB: PolygonGeometry = [
-    [b.map((p): Coordinate => [p.x, p.y])],
-  ]
-
-  const result = polygonClipping.union(polyA, polyB)
-  const merged = result?.[0]?.[0]
-
-  if (!merged) return a
-
-  return merged.map(point => ({
-    x: point[0],
-    y: point[1],
-  }))
-}
 
 function mergeRoomIntoExisting(
   rooms: Room[],
@@ -238,26 +113,6 @@ function mergeRoomIntoExisting(
       obstacle: false,
     },
   ]
-}
-
-function getNextTableNumber(tables: TableEl[]) {
-  const usedNumbers = new Set(tables.map(t => t.num))
-
-  let nextNumber = 1
-
-  while (usedNumbers.has(nextNumber)) {
-    nextNumber++
-  }
-
-  return nextNumber
-}
-
-function canPlace(pt: Pt, rooms: Room[], tables: TableEl[]) {
-  const inRoom = rooms.some(r => !r.obstacle && pointInPoly(pt, r.vertices))
-  const inObst = rooms.some(r => r.obstacle && pointInPoly(pt, r.vertices))
-  const tooClose = tables.some(t => dist(pt, { x: t.x, y: t.y }) < TR * 2)
-
-  return inRoom && !inObst && !tooClose
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -421,7 +276,7 @@ export default function FloorPlanEditor({
       }
     }
 
-    if (mode === 'place' && canPlace(p, rooms, tables)) {
+    if (mode === 'place' && canPlace(p, rooms, tables, TR)) {
       const nextNum = getNextTableNumber(tables)
 
       setTables(ts => [
@@ -716,8 +571,8 @@ export default function FloorPlanEditor({
               cx={cursor.x}
               cy={cursor.y}
               r={TR}
-              fill={canPlace(cursor, rooms, tables) ? '#1f2937' : '#e5e7eb'}
-              stroke={canPlace(cursor, rooms, tables) ? 'white' : '#d1d5db'}
+              fill={canPlace(cursor, rooms, tables, TR) ? '#1f2937' : '#e5e7eb'}
+              stroke={canPlace(cursor, rooms, tables, TR) ? 'white' : '#d1d5db'}
               strokeWidth={2}
               opacity={0.55}
               style={{ pointerEvents: 'none' }}
